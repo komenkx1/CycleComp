@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CADisableMinimumFrameDurationOnPhone</key>
+	<true/>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleDisplayName</key>
+	<string>CycleComp</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>org.reactjs.native.example.CycleComp</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>cyclecomp</string>
+			</array>
+		</dict>
+	</array>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleSignature</key>
+	<string>????</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<false/>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>CycleComp menggunakan lokasi untuk mengikuti posisi dan merekam jalur selama perjalanan aktif, termasuk saat layar terkunci.</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>CycleComp terhubung ke realme Watch 5 untuk membaca heart rate selama perjalanan yang kamu mulai.</string>
+	<key>NSMotionUsageDescription</key>
+	<string>CycleComp memakai sensor gerak dan aktivitas iPhone untuk membantu auto-pause, serta barometer untuk mengukur perubahan elevasi selama perjalanan.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>CycleComp terhubung ke server peta lokal saat mengunduh atau memperbarui peta offline uji.</string>
+	<key>TerrainAllowUnsignedPilot</key>
+	<string>$(TERRAIN_ALLOW_UNSIGNED_PILOT)</string>
+	<key>TerrainPackTrustedSigningKeys</key>
+	<dict>
+		<key>terrain-test-2026</key>
+		<string>HAr3X/jepUfM3G4uKa4p9FkI62yzbiw6yRtbx5S2h30=</string>
+		<key>terrain-release-2026</key>
+		<string>JRRCNfZSr9FT4f7sHG+YFEiE6722krgIdv6Pi5+h7XE=</string>
+	</dict>
+	<key>RCTNewArchEnabled</key>
+	<true/>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>location</string>
+	</array>
+	<key>UILaunchStoryboardName</key>
+	<string>LaunchScreen</string>
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>arm64</string>
+	</array>
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+	</array>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+	</array>
+	<key>UIViewControllerBasedStatusBarAppearance</key>
+	<false/>
+</dict>
+</plist>

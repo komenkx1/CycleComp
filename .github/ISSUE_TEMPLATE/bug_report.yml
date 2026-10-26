@@ -1,0 +1,40 @@
+name: Bug report
+description: Report a problem in CycleComp
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Please do not attach ride GPX files, logs, or screenshots containing private location or device information.
+  - type: input
+    id: app_version
+    attributes:
+      label: App version or build
+      placeholder: "1.0 (1)"
+    validations:
+      required: true
+  - type: input
+    id: ios_version
+    attributes:
+      label: iOS version and device model
+      placeholder: "iOS 18, iPhone model"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include the smallest repeatable set of steps.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
