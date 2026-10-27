@@ -7,6 +7,7 @@ import android.net.Uri
 import android.os.Build
 import android.system.Os
 import org.json.JSONObject
+import org.json.JSONArray
 import java.io.File
 import java.io.FileWriter
 import java.io.FileOutputStream
@@ -21,6 +22,8 @@ internal object RideTrackingEngine {
   private const val activeRideKey = "active_ride"
   private var ride: Ride? = null
   private var recoveryError: String? = null
+  private val sessionEvents = mutableListOf<RideSessionEvent>()
+  private var hasMotionTimingEvents = false
   private val ridePoints = mutableListOf<RidePoint>()
   private var elevationDataAvailable = false
   private var accumulatedDistanceMeters = 0.0
@@ -35,6 +38,7 @@ internal object RideTrackingEngine {
   private val heartRateRecorder = RideHeartRateRecorder()
   private var watchHeartRate: RealmeWatchHeartRate? = null
   private var phoneSensors: RidePhoneSensors? = null
+  private var activityRecognition: RideActivityRecognition? = null
   private var sensorsRunning = false
   private val motionCoordinator = RideMotionCoordinator()
   private val speedSmoother = RideSpeedSmoother()
@@ -72,6 +76,13 @@ internal object RideTrackingEngine {
     val liveGradeWindowMeters: Double?,
     val liveGradeSampleCount: Int?,
     val speedMetersPerSecond: Float?,
+    val filteredSpeedMetersPerSecond: Double?,
+    val speedSource: String?,
+    val speedAccuracyMetersPerSecond: Float?,
+    val courseDegrees: Float?,
+    val barometricPressureKilopascals: Double?,
+    val motionState: String?,
+    val cumulativeDistanceMeters: Double?,
     val heartRateBpm: Int?,
     val heartRateRecordedAtMillis: Long?,
     val segmentStart: Boolean,
@@ -95,6 +106,15 @@ internal object RideTrackingEngine {
       )
       totalPausedSeconds = savedState.optDouble("totalPausedSeconds", 0.0)
       totalAutoPausedSeconds = savedState.optDouble("totalAutoPausedSeconds", 0.0)
+      sessionEvents.clear()
+      val savedEvents = savedState.optJSONArray("events")
+      hasMotionTimingEvents = savedEvents != null
+      if (savedEvents != null) {
+        for (index in 0 until savedEvents.length()) {
+          val event = savedEvents.getJSONObject(index)
+          sessionEvents.add(RideSessionEvent(event.getString("kind"), event.getLong("effectiveAtMillis"), event.getLong("detectedAtMillis")))
+        }
+      }
       loadRidePoints(context)
       val recoveredRide = ride!!
       if (recoveredRide.pausedAtMillis == null) {
@@ -103,6 +123,10 @@ internal object RideTrackingEngine {
       }
       nextPointStartsSegment = true
       recalculateRideStatistics()
+      if (hasMotionTimingEvents && savedStatus != "paused") {
+        appendSessionEvent("motion_unknown", recoveredRide.pausedAtMillis!!)
+        appendSessionEvent("manual_paused", recoveredRide.pausedAtMillis!!)
+      }
       if (File(recordingDirectory(context), "${recoveredRide.id}-hr.jsonl").isFile) {
         heartRateRecorder.open(recordingDirectory(context), recoveredRide.id)
       }
@@ -160,14 +184,27 @@ internal object RideTrackingEngine {
     val lastPoint = ridePoints.lastOrNull()
     sensors.start(lastPoint?.elevationMeters, lastPoint?.elevationSource == "barometer_gps" &&
       lastPoint.elevationAnchorQuality == "calibrated")
+    val activity = activityRecognition ?: RideActivityRecognition(context.applicationContext).also { activityRecognition = it }
+    activity.start()
     sensorsRunning = true
   }
 
   @Synchronized
   fun stopSensors() {
     if (sensorsRunning) phoneSensors?.stop()
+    if (sensorsRunning) activityRecognition?.stop()
     sensorsRunning = false
     sensorTrace.synchronize()
+  }
+
+  @Synchronized
+  fun onActivityRecognition(context: Context, stillConfidence: Int, timestampMillis: Long) {
+    initialize(context)
+    val activeRide = ride ?: return
+    if (!sensorsRunning || (activeRide.status != "active" && !(activeRide.status == "paused" && activeRide.autoPaused))) return
+    val ageMillis = System.currentTimeMillis() - timestampMillis
+    if (ageMillis !in -1_000L..30_000L) return
+    activityRecognition?.update(stillConfidence, timestampMillis)
   }
 
   @Synchronized
@@ -196,7 +233,7 @@ internal object RideTrackingEngine {
       "timerSeconds" to rideClock,
       "durationSeconds" to rideClock,
       "durationUpdatedAt" to isoTimestamp(now),
-      "movingSeconds" to accumulatedMovingSeconds,
+      "movingSeconds" to movingSeconds(activeRide, now),
       "manualPausedSeconds" to (totalPausedSeconds - totalAutoPausedSeconds +
         if (activeRide.status == "paused" && !activeRide.autoPaused && activeRide.pausedAtMillis != null) {
           (now - activeRide.pausedAtMillis!!) / 1000.0
@@ -205,14 +242,22 @@ internal object RideTrackingEngine {
         if (activeRide.autoPaused && activeRide.pausedAtMillis != null) {
           (now - activeRide.pausedAtMillis!!) / 1000.0
         } else 0.0),
-      "unknownMotionSeconds" to 0,
+      "unknownMotionSeconds" to unknownMotionSeconds(activeRide, now),
       "distanceMeters" to accumulatedDistanceMeters,
       "ascentMeters" to accumulatedAscentMeters,
       "descentMeters" to accumulatedDescentMeters,
       "elevationDataAvailable" to elevationDataAvailable,
       "speedMetersPerSecond" to displayedSpeed,
-      "speedSource" to lastPoint?.speedMetersPerSecond?.let { "gps" },
+      "speedSource" to lastPoint?.speedSource,
       "rawSpeedMetersPerSecond" to lastPoint?.speedMetersPerSecond,
+      "speedAccuracyMetersPerSecond" to lastPoint?.speedAccuracyMetersPerSecond,
+      "speedLowerBoundMetersPerSecond" to lastPoint?.speedMetersPerSecond?.let { speed ->
+        lastPoint.speedAccuracyMetersPerSecond?.let { accuracy -> (speed - accuracy).coerceAtLeast(0f) }
+      },
+      "speedUpperBoundMetersPerSecond" to lastPoint?.speedMetersPerSecond?.let { speed ->
+        lastPoint.speedAccuracyMetersPerSecond?.let { accuracy -> speed + accuracy }
+      },
+      "courseDegrees" to lastPoint?.courseDegrees,
       "elevationMeters" to lastPoint?.elevationMeters,
       "elevationSource" to lastPoint?.elevationSource,
       "elevationAnchorQuality" to lastPoint?.elevationAnchorQuality,
@@ -246,6 +291,8 @@ internal object RideTrackingEngine {
       heartRateRecorder.open(recordingDirectory(context), rideId)
     }
     ride = Ride(rideId, now, "active")
+    sessionEvents.clear()
+    hasMotionTimingEvents = true
     ridePoints.clear()
     resetMotionMeasurements()
     elevationDataAvailable = false
@@ -277,6 +324,8 @@ internal object RideTrackingEngine {
   fun pause(context: Context, automatic: Boolean = false): Map<String, Any?> {
     val activeRide = requireActiveRide("active")
     val now = System.currentTimeMillis()
+    if (!automatic) endMotionEvidence(now, sessionEvents)
+    appendSessionEvent(if (automatic) "auto_paused" else "manual_paused", now)
     activeRide.status = "paused"
     activeRide.autoPaused = automatic
     activeRide.pausedAtMillis = now
@@ -288,6 +337,7 @@ internal object RideTrackingEngine {
       pendingAutoPauseLocations.clear()
     } else {
       speedSmoother.reset()
+      sensorTrace.append("speedReset", JSONObject().put("reason", "auto_pause"))
       gradeEstimator.reset()
     }
     nextPointStartsSegment = true
@@ -309,6 +359,7 @@ internal object RideTrackingEngine {
     activeRide.pausedAtMillis = null
     activeRide.status = "active"
     activeRide.autoPaused = false
+    appendSessionEvent("resumed", System.currentTimeMillis())
     if (preferences(context).getBoolean("watch_heart_rate", false)) {
       heartRateRecorder.open(recordingDirectory(context), activeRide.id)
       initializeWatch(context)
@@ -332,8 +383,11 @@ internal object RideTrackingEngine {
     val finalTotalPausedSeconds = totalPausedSeconds + finalPauseSeconds
     val finalTotalAutoPausedSeconds = totalAutoPausedSeconds + if (activeRide.autoPaused) finalPauseSeconds else 0.0
     val finishedRide = activeRide.copy(finishedAtMillis = now, pausedAtMillis = null)
+    val finalEvents = sessionEvents.toMutableList()
+    endMotionEvidence(now, finalEvents)
+    finalEvents.add(RideSessionEvent("finished", now, now))
     val exportedFile = if (ridePoints.isEmpty()) null else exportGpx(
-      context, finishedRide, now, finalTotalPausedSeconds, finalTotalAutoPausedSeconds,
+      context, finishedRide, now, finalTotalPausedSeconds, finalTotalAutoPausedSeconds, finalEvents,
     )
     val savedHeartRate = try {
       heartRateRecorder.exportTo(ridesDirectory(context))
@@ -354,6 +408,8 @@ internal object RideTrackingEngine {
       "durationSeconds" to rideClock(finishedRide, now, finalTotalPausedSeconds),
       "manualPausedSeconds" to finalTotalPausedSeconds - finalTotalAutoPausedSeconds,
       "autoPausedSeconds" to finalTotalAutoPausedSeconds,
+      "movingSeconds" to movingSeconds(finishedRide, now, finalEvents),
+      "unknownMotionSeconds" to unknownMotionSeconds(finishedRide, now, finalEvents, finalTotalPausedSeconds),
       "fileUrl" to exportedFile?.let { Uri.fromFile(it).toString() },
       "sensorTraceFileUrl" to sensorTrace.file?.takeIf { it.isFile }?.let { Uri.fromFile(it).toString() },
       "heartRateFileUrl" to savedHeartRate?.let { Uri.fromFile(it).toString() },
@@ -379,12 +435,25 @@ internal object RideTrackingEngine {
     if (!location.latitude.isFinite() || location.latitude !in -90.0..90.0 ||
       !location.longitude.isFinite() || location.longitude !in -180.0..180.0 ||
       !location.hasAccuracy() || !location.accuracy.isFinite() ||
-      location.accuracy < 0 || location.accuracy > maximumHorizontalAccuracyMeters ||
-      location.time < activeRide.startedAtMillis || location.time > now ||
-      now - location.time > if (replayingBuffered) 5_000 else 3_000) return null
+      location.accuracy < 0 || location.accuracy > maximumHorizontalAccuracyMeters) {
+      sensorTrace.append("locationRejected", JSONObject().put("reason", "recording_quality"))
+      return null
+    }
+    if (location.time < activeRide.startedAtMillis || location.time > now ||
+      now - location.time > if (replayingBuffered) 5_000 else 3_000) {
+      sensorTrace.append("locationRejected", JSONObject().put("reason", when {
+        location.time < activeRide.startedAtMillis -> "outside_ride_window"
+        location.time > now -> "future_fix"
+        else -> "stale_fix"
+      }))
+      return null
+    }
 
     val previousPoint = ridePoints.lastOrNull()
-    if (previousPoint != null && location.time <= previousPoint.timestampMillis) return null
+    if (previousPoint != null && location.time <= previousPoint.timestampMillis) {
+      sensorTrace.append("locationRejected", JSONObject().put("reason", "recording_out_of_order"))
+      return null
+    }
     val elapsedSeconds = previousPoint?.let { (location.time - it.timestampMillis) / 1000.0 } ?: 0.0
     val movedMeters = previousPoint?.let {
       val previousLocation = Location("CycleComp").apply {
@@ -393,25 +462,36 @@ internal object RideTrackingEngine {
       }
       location.distanceTo(previousLocation).toDouble()
     } ?: 0.0
-    val estimatedSpeed = if ((!nextPointStartsSegment || activeRide.autoPaused) &&
-      elapsedSeconds > 0 && elapsedSeconds <= maximumDistanceCreditIntervalSeconds) {
-      movedMeters / elapsedSeconds
-    } else null
     val gpsSpeed = if (Build.VERSION.SDK_INT >= 26) {
       if (location.hasSpeed()) location.speed else null
     } else {
       location.speed.takeIf { it > 0 }
     }
-    val acceptedSpeed: Double? = gpsSpeed?.toDouble()?.takeIf { it.isFinite() && it >= 0 }
-      ?: estimatedSpeed?.takeIf { it.isFinite() }
+    val gpsSpeedAccuracy = if (Build.VERSION.SDK_INT >= 26 && location.hasSpeedAccuracy()) {
+      location.speedAccuracyMetersPerSecond.takeIf { it.isFinite() && it >= 0f }
+    } else null
     if (!replayingBuffered) {
       val previousMotionLocation = lastMotionLocation
       val displacement = previousMotionLocation?.distanceTo(location)?.toDouble() ?: 0.0
       val transition = motionCoordinator.observe(RideMotionCoordinator.Sample(
         location.latitude, location.longitude, location.accuracy.toDouble(), gpsSpeed?.toDouble(),
         if (Build.VERSION.SDK_INT >= 26 && location.hasSpeedAccuracy()) location.speedAccuracyMetersPerSecond.toDouble() else null,
-        displacement, location.time,
+        displacement, location.time, activityRecognition?.isStationary(location.time) == true,
       ))
+      val observation = motionCoordinator.lastObservation
+      if (observation == null) sensorTrace.append("locationBaseline") else appendMotionTrace(observation)
+      if (transition != null) {
+        val eventKind = when (transition.state) {
+          RideAutoPausePolicy.MotionState.moving -> "motion_started"
+          RideAutoPausePolicy.MotionState.stationary -> "motion_stopped"
+          RideAutoPausePolicy.MotionState.unknown -> "motion_unknown"
+        }
+        if (transition.state == RideAutoPausePolicy.MotionState.moving && activeRide.status == "active") {
+          backfillConfirmedDistance(transition.effectiveAtMillis)
+        }
+        appendSessionEvent(eventKind, transition.effectiveAtMillis)
+        saveRide(context)
+      }
       lastMotionLocation = Location(location)
       val autoPauseEnabled = preferences(context).getBoolean("auto_pause", false)
       if (activeRide.status == "paused" && activeRide.autoPaused) {
@@ -437,11 +517,21 @@ internal object RideTrackingEngine {
       }
     }
 
+    val rawGpsSpeed = gpsSpeed?.takeIf { it.isFinite() && it in 0f..maximumPlausibleSpeedMetersPerSecond.toFloat() }
+    val validSpeedAccuracy = gpsSpeedAccuracy?.takeIf { it <= 4f }
+    val measuredGpsSpeed = rawGpsSpeed?.takeIf { validSpeedAccuracy != null }?.toDouble()
+    val positionSpeed = motionCoordinator.takePositionSpeed(location.time)?.speedMetersPerSecond
+    val acceptedSpeed = measuredGpsSpeed ?: positionSpeed
+    if (!nextPointStartsSegment && previousPoint != null && elapsedSeconds > 0 &&
+      (elapsedSeconds > maximumDistanceCreditIntervalSeconds || movedMeters / elapsedSeconds > maximumPlausibleSpeedMetersPerSecond)) {
+      nextPointStartsSegment = true
+    }
     val distanceBeforeLocation = accumulatedDistanceMeters
     val movingSecondsBeforeLocation = accumulatedMovingSeconds
     if (!nextPointStartsSegment && previousPoint != null && elapsedSeconds > 0 && elapsedSeconds <= maximumDistanceCreditIntervalSeconds &&
       movedMeters / elapsedSeconds <= maximumPlausibleSpeedMetersPerSecond &&
-      (acceptedSpeed ?: 0.0) >= minimumDistanceCreditSpeedMetersPerSecond) {
+      (acceptedSpeed ?: 0.0) >= minimumDistanceCreditSpeedMetersPerSecond &&
+      (!hasMotionTimingEvents || motionCoordinator.state == RideAutoPausePolicy.MotionState.moving)) {
       accumulatedDistanceMeters += movedMeters
     }
     if (!nextPointStartsSegment && previousPoint != null && elapsedSeconds in 0.0..movingIntervalLimitSeconds &&
@@ -465,18 +555,38 @@ internal object RideTrackingEngine {
       motionCoordinator.state == RideAutoPausePolicy.MotionState.moving, verticalAccuracy?.toDouble())
     displayedSpeed = speedSmoother.update(acceptedSpeed, location.time,
       motionCoordinator.state == RideAutoPausePolicy.MotionState.stationary)
+    val stationary = motionCoordinator.state == RideAutoPausePolicy.MotionState.stationary
+    val speedSource = when {
+      stationary && displayedSpeed != null -> "stationary"
+      acceptedSpeed == null && displayedSpeed != null -> "held"
+      acceptedSpeed == null -> null
+      measuredGpsSpeed != null -> "gps"
+      else -> "position"
+    }
+    sensorTrace.append("speed", JSONObject().put("speed", JSONObject().apply {
+      put("timestamp", location.time / 1000.0)
+      put("measuredSpeedMetersPerSecond", acceptedSpeed ?: JSONObject.NULL)
+      put("stationary", stationary)
+      put("filteredSpeedMetersPerSecond", displayedSpeed ?: JSONObject.NULL)
+      put("speedSource", speedSource ?: JSONObject.NULL)
+    }))
     val motionSummary = phoneSensors?.motionSummary(location.time)
     sensorTrace.append("location", JSONObject().put("location", JSONObject().apply {
       put("timestamp", location.time / 1000.0)
       put("latitude", location.latitude)
       put("longitude", location.longitude)
       put("horizontalAccuracyMeters", location.accuracy.toDouble())
-      put("verticalAccuracyMeters", verticalAccuracy?.toDouble() ?: JSONObject.NULL)
-      put("gpsElevationMeters", gpsElevation?.takeIf { it.isFinite() } ?: JSONObject.NULL)
-      put("speedMetersPerSecond", gpsSpeed?.takeIf { it.isFinite() }?.toDouble() ?: JSONObject.NULL)
+      put("verticalAccuracyMeters", verticalAccuracy?.toDouble() ?: -1.0)
+      put("gpsElevationMeters", gpsElevation?.takeIf { it.isFinite() } ?: 0.0)
+      put("speedMetersPerSecond", gpsSpeed?.takeIf { it.isFinite() }?.toDouble() ?: -1.0)
+      put("speedAccuracyMetersPerSecond", if (Build.VERSION.SDK_INT >= 26 && location.hasSpeedAccuracy() && location.speedAccuracyMetersPerSecond.isFinite()) location.speedAccuracyMetersPerSecond.toDouble() else -1.0)
       put("barometerStatus", phoneSensors?.barometerStatus ?: "unavailable")
-      put("motionActivityStatus", "unavailable")
-      put("motionActivityIsStationary", false)
+      put("motionActivityStatus", activityRecognition?.status ?: "unavailable")
+      put("motionActivityIsStationary", activityRecognition?.isStationary(location.time) == true)
+      put("motionActivityConfidence", activityRecognition?.takeIf { it.status == "active" }?.confidence?.let {
+        when { it >= 75 -> "high"; it >= 50 -> "medium"; else -> "low" }
+      } ?: JSONObject.NULL)
+      put("motionActivityObservedAt", activityRecognition?.observedAtMillis?.div(1000.0) ?: JSONObject.NULL)
       put("accelerationRmsG", motionSummary?.get("motionAccelerationRmsG") ?: JSONObject.NULL)
       put("rotationRmsRadiansPerSecond", motionSummary?.get("motionRotationRmsRadiansPerSecond") ?: JSONObject.NULL)
     }))
@@ -495,7 +605,14 @@ internal object RideTrackingEngine {
       liveGradeSource = if (liveGrade == null) null else if (gradeSource == "gps") "gps" else "barometer",
       liveGradeWindowMeters = if (liveGrade == null) null else gradeEstimator.measurementWindowMeters,
       liveGradeSampleCount = if (liveGrade == null) null else gradeEstimator.measurementSampleCount,
-      speedMetersPerSecond = acceptedSpeed?.toFloat(),
+      speedMetersPerSecond = rawGpsSpeed,
+      filteredSpeedMetersPerSecond = displayedSpeed,
+      speedSource = speedSource,
+      speedAccuracyMetersPerSecond = validSpeedAccuracy,
+      courseDegrees = if (location.hasBearing()) location.bearing.takeIf { it.isFinite() && it >= 0f } else null,
+      barometricPressureKilopascals = altitude.pressureKilopascals,
+      motionState = motionCoordinator.state.name,
+      cumulativeDistanceMeters = accumulatedDistanceMeters,
       heartRateBpm = watchHeartRate?.lastSampleAt?.takeIf { location.time - it in 0L..15_000L }
         ?.let { watchHeartRate?.currentHeartRate },
       heartRateRecordedAtMillis = watchHeartRate?.lastSampleAt?.takeIf {
@@ -541,7 +658,8 @@ internal object RideTrackingEngine {
     "sensorTraceStatus" to sensorTrace.status,
     "barometerStatus" to (phoneSensors?.barometerStatus ?: "unavailable"),
     "motionSensorStatus" to (phoneSensors?.motionSensorStatus ?: "unavailable"),
-    "motionActivityStatus" to "unavailable",
+    "motionActivityStatus" to (activityRecognition?.status ?: "unavailable"),
+    "motionActivityStationary" to (activityRecognition?.isStationary(System.currentTimeMillis()) == true),
     "terrainMatchStatus" to "noPack",
     "forwardPathQuality" to "unavailable",
     "profileQuality" to "unavailable",
@@ -628,6 +746,34 @@ internal object RideTrackingEngine {
   private fun requireActiveRide(expectedStatus: String): Ride =
     ride?.takeIf { it.status == expectedStatus } ?: error("Tidak ada perjalanan aktif untuk dijeda.")
 
+  private fun appendSessionEvent(kind: String, effectiveAtMillis: Long) {
+    if (hasMotionTimingEvents) sessionEvents.add(RideSessionEvent(kind, effectiveAtMillis, System.currentTimeMillis()))
+  }
+
+  private fun endMotionEvidence(endMillis: Long, events: MutableList<RideSessionEvent>) {
+    if (!hasMotionTimingEvents) return
+    val lastLocationAt = lastMotionLocation?.time ?: ridePoints.lastOrNull()?.timestampMillis
+    val ending = RideMotionTiming.endingEvent(motionCoordinator.state, lastLocationAt, endMillis) ?: return
+    events.add(RideSessionEvent(ending.first, ending.second, endMillis))
+  }
+
+  private fun movingSeconds(activeRide: Ride, endMillis: Long, events: List<RideSessionEvent> = sessionEvents): Double {
+    if (!hasMotionTimingEvents || events.isEmpty()) return accumulatedMovingSeconds
+    return RideMotionTiming.movingSeconds(events, ridePoints.lastOrNull()?.timestampMillis, endMillis)
+      .coerceAtMost(((endMillis - activeRide.startedAtMillis) / 1000.0).coerceAtLeast(0.0))
+  }
+
+  private fun unknownMotionSeconds(
+    activeRide: Ride,
+    endMillis: Long,
+    events: List<RideSessionEvent> = sessionEvents,
+    pausedSeconds: Double = totalPausedSeconds,
+  ): Double {
+    if (!hasMotionTimingEvents) return 0.0
+    return RideMotionTiming.unknownSeconds(events, activeRide.startedAtMillis, ridePoints.lastOrNull()?.timestampMillis, endMillis)
+      .coerceAtMost(rideClock(activeRide, endMillis, pausedSeconds))
+  }
+
   private fun rideClock(activeRide: Ride, atMillis: Long, savedPausedSeconds: Double = totalPausedSeconds): Double {
     val pauseStartedAt = activeRide.pausedAtMillis
     val currentPauseSeconds = if (pauseStartedAt != null) (atMillis - pauseStartedAt) / 1000.0 else 0.0
@@ -671,6 +817,13 @@ internal object RideTrackingEngine {
           liveGradeWindowMeters = point.optDouble("liveGradeWindowMeters").takeIf { !point.isNull("liveGradeWindowMeters") },
           liveGradeSampleCount = point.optInt("liveGradeSampleCount").takeIf { !point.isNull("liveGradeSampleCount") },
           speedMetersPerSecond = point.optDouble("speedMetersPerSecond").takeIf { !point.isNull("speedMetersPerSecond") }?.toFloat(),
+          filteredSpeedMetersPerSecond = point.optDouble("filteredSpeedMetersPerSecond").takeIf { !point.isNull("filteredSpeedMetersPerSecond") },
+          speedSource = point.optString("speedSource").takeIf { it.isNotEmpty() && it != "null" },
+          speedAccuracyMetersPerSecond = point.optDouble("speedAccuracyMetersPerSecond").takeIf { !point.isNull("speedAccuracyMetersPerSecond") }?.toFloat(),
+          courseDegrees = point.optDouble("courseDegrees").takeIf { !point.isNull("courseDegrees") }?.toFloat(),
+          barometricPressureKilopascals = point.optDouble("barometricPressureKilopascals").takeIf { !point.isNull("barometricPressureKilopascals") },
+          motionState = point.optString("motionState").takeIf { it.isNotEmpty() && it != "null" },
+          cumulativeDistanceMeters = point.optDouble("cumulativeDistanceMeters").takeIf { !point.isNull("cumulativeDistanceMeters") },
           heartRateBpm = point.optInt("heartRateBpm").takeIf { !point.isNull("heartRateBpm") && it > 0 },
           heartRateRecordedAtMillis = point.optLong("heartRateRecordedAtMillis").takeIf { !point.isNull("heartRateRecordedAtMillis") && it > 0 },
           segmentStart = point.optBoolean("segmentStart"),
@@ -704,7 +857,8 @@ internal object RideTrackingEngine {
       val elapsedSeconds = (point.timestampMillis - previousPoint.timestampMillis) / 1000.0
       if (!point.segmentStart && elapsedSeconds > 0 && elapsedSeconds <= maximumDistanceCreditIntervalSeconds &&
         distanceMeters / elapsedSeconds <= maximumPlausibleSpeedMetersPerSecond &&
-        (point.speedMetersPerSecond ?: 0f) >= minimumDistanceCreditSpeedMetersPerSecond) {
+        (point.speedMetersPerSecond ?: 0f) >= minimumDistanceCreditSpeedMetersPerSecond &&
+        (point.motionState == "moving" || (point.motionState == null && (point.speedMetersPerSecond ?: 0f) >= minimumMovingSpeedMetersPerSecond))) {
         accumulatedDistanceMeters += distanceMeters
       }
       if (!point.segmentStart && elapsedSeconds in 0.0..movingIntervalLimitSeconds &&
@@ -712,6 +866,27 @@ internal object RideTrackingEngine {
         accumulatedMovingSeconds += elapsedSeconds
       }
       updateElevationTotals(point)
+    }
+    ridePoints.lastOrNull()?.cumulativeDistanceMeters?.takeIf { it.isFinite() && it >= 0 }?.let {
+      accumulatedDistanceMeters = it
+    }
+  }
+
+  private fun backfillConfirmedDistance(movementStartedAtMillis: Long) {
+    if (!hasMotionTimingEvents) return
+    for (index in ridePoints.lastIndex downTo 1) {
+      val previousPoint = ridePoints[index - 1]
+      val point = ridePoints[index]
+      if (point.timestampMillis < movementStartedAtMillis) break
+      val intervalSeconds = (point.timestampMillis - previousPoint.timestampMillis) / 1000.0
+      if (previousPoint.timestampMillis < movementStartedAtMillis || point.segmentStart ||
+        intervalSeconds <= 0 || intervalSeconds > 3 || previousPoint.accuracyMeters > 20 || point.accuracyMeters > 20) continue
+      val previousLocation = Location("CycleComp").apply { latitude = previousPoint.latitude; longitude = previousPoint.longitude }
+      val currentLocation = Location("CycleComp").apply { latitude = point.latitude; longitude = point.longitude }
+      val distance = currentLocation.distanceTo(previousLocation).toDouble()
+      if (distance / intervalSeconds in minimumDistanceCreditSpeedMetersPerSecond..maximumPlausibleSpeedMetersPerSecond) {
+        accumulatedDistanceMeters += distance
+      }
     }
   }
 
@@ -732,6 +907,13 @@ internal object RideTrackingEngine {
       put("liveGradeWindowMeters", point.liveGradeWindowMeters ?: JSONObject.NULL)
       put("liveGradeSampleCount", point.liveGradeSampleCount ?: JSONObject.NULL)
       put("speedMetersPerSecond", point.speedMetersPerSecond?.toDouble() ?: JSONObject.NULL)
+      put("filteredSpeedMetersPerSecond", point.filteredSpeedMetersPerSecond ?: JSONObject.NULL)
+      put("speedSource", point.speedSource ?: JSONObject.NULL)
+      put("speedAccuracyMetersPerSecond", point.speedAccuracyMetersPerSecond?.toDouble() ?: JSONObject.NULL)
+      put("courseDegrees", point.courseDegrees?.toDouble() ?: JSONObject.NULL)
+      put("barometricPressureKilopascals", point.barometricPressureKilopascals ?: JSONObject.NULL)
+      put("motionState", point.motionState ?: JSONObject.NULL)
+      put("cumulativeDistanceMeters", point.cumulativeDistanceMeters ?: JSONObject.NULL)
       put("heartRateBpm", point.heartRateBpm ?: JSONObject.NULL)
       put("heartRateRecordedAtMillis", point.heartRateRecordedAtMillis ?: JSONObject.NULL)
       put("segmentStart", point.segmentStart)
@@ -753,12 +935,19 @@ internal object RideTrackingEngine {
       put("totalPausedSeconds", totalPausedSeconds)
       put("totalAutoPausedSeconds", totalAutoPausedSeconds)
       put("autoPaused", activeRide.autoPaused)
+      if (hasMotionTimingEvents) put("events", JSONArray().apply {
+        sessionEvents.forEach { event -> put(JSONObject().apply {
+          put("kind", event.kind)
+          put("effectiveAtMillis", event.effectiveAtMillis)
+          put("detectedAtMillis", event.detectedAtMillis)
+        }) }
+      })
     }
     preferences(context).edit().putString(activeRideKey, snapshot.toString()).apply()
     lastCheckpointAt = System.currentTimeMillis()
   }
 
-  private fun exportGpx(context: Context, activeRide: Ride, finishedAt: Long, pausedSeconds: Double, autoPausedSeconds: Double): File {
+  private fun exportGpx(context: Context, activeRide: Ride, finishedAt: Long, pausedSeconds: Double, autoPausedSeconds: Double, events: List<RideSessionEvent>): File {
     val output = File(ridesDirectory(context), "CycleComp-${activeRide.id}.gpx")
     output.parentFile?.mkdirs()
     val timerSeconds = rideClock(activeRide, finishedAt, pausedSeconds)
@@ -785,15 +974,18 @@ internal object RideTrackingEngine {
       writer.appendLine("<gpx version=\"1.1\" creator=\"CycleComp\" xmlns=\"http://www.topografix.com/GPX/1/1\" xmlns:cyclecomp=\"https://mangwahyu.tech/cyclecomp/gpx/1\" xmlns:gpxtpx=\"http://www.garmin.com/xmlschemas/TrackPointExtension/v1\">")
       writer.appendLine("<metadata><time>${isoTimestamp(activeRide.startedAtMillis)}</time><extensions>")
       writer.appendLine(
-        "<cyclecomp:activitySummary algorithmVersion=\"android-gps-v1\" " +
+        "<cyclecomp:activitySummary algorithmVersion=\"${if (hasMotionTimingEvents) RideMotionTiming.algorithmVersion else "android-gps-v1"}\" " +
           "distanceMeters=\"$accumulatedDistanceMeters\" elapsedSeconds=\"$elapsedSeconds\" " +
-          "timerSeconds=\"$timerSeconds\" movingSeconds=\"$accumulatedMovingSeconds\" " +
+          "timerSeconds=\"$timerSeconds\" movingSeconds=\"${movingSeconds(activeRide, finishedAt, events)}\" " +
           "manualPausedSeconds=\"${pausedSeconds - autoPausedSeconds}\" " +
-          "autoPausedSeconds=\"$autoPausedSeconds\" trackTimeSpanSeconds=\"$trackTimeSpanSeconds\" " +
+          "autoPausedSeconds=\"$autoPausedSeconds\" unknownMotionSeconds=\"${unknownMotionSeconds(activeRide, finishedAt, events, pausedSeconds)}\" trackTimeSpanSeconds=\"$trackTimeSpanSeconds\" " +
           elevationGainAttributes +
           "elevationQuality=\"$elevationQuality\" />",
       )
       writer.appendLine("<cyclecomp:finishedAt>${isoTimestamp(finishedAt)}</cyclecomp:finishedAt>")
+      events.sortedWith(compareBy<RideSessionEvent> { it.effectiveAtMillis }.thenBy { it.detectedAtMillis }).forEach { event ->
+        writer.appendLine("<cyclecomp:sessionEvent kind=\"${event.kind}\" effectiveAt=\"${isoTimestamp(event.effectiveAtMillis)}\" detectedAt=\"${isoTimestamp(event.detectedAtMillis)}\" />")
+      }
       writer.appendLine("</extensions></metadata>")
       writer.appendLine("<trk><name>CycleComp ride</name><type>cycling</type>")
       var segmentOpen = false
@@ -807,20 +999,31 @@ internal object RideTrackingEngine {
           .append("\" lon=\"").append(point.longitude.toString()).append("\">")
         point.elevationMeters?.let { writer.append("<ele>").append(it.toString()).append("</ele>") }
         writer.append("<time>").append(isoTimestamp(point.timestampMillis)).append("</time>")
-        if (point.elevationSource != null || point.relativeElevationMeters != null || point.liveGradePercent != null || point.heartRateBpm != null) {
-          writer.append("<extensions>")
+        writer.append("<extensions>")
+          writer.append("<cyclecomp:horizontalAccuracyMeters>${point.accuracyMeters}</cyclecomp:horizontalAccuracyMeters>")
+          point.verticalAccuracyMeters?.let { writer.append("<cyclecomp:verticalAccuracyMeters>$it</cyclecomp:verticalAccuracyMeters>") }
+          point.speedMetersPerSecond?.let { writer.append("<cyclecomp:speedMetersPerSecond>$it</cyclecomp:speedMetersPerSecond>") }
+          point.filteredSpeedMetersPerSecond?.let { writer.append("<cyclecomp:filteredSpeedMetersPerSecond>$it</cyclecomp:filteredSpeedMetersPerSecond>") }
+          point.speedSource?.let { writer.append("<cyclecomp:speedSource>$it</cyclecomp:speedSource>") }
+          point.speedAccuracyMetersPerSecond?.let { writer.append("<cyclecomp:speedAccuracyMetersPerSecond>$it</cyclecomp:speedAccuracyMetersPerSecond>") }
+          if (point.speedMetersPerSecond != null && point.speedAccuracyMetersPerSecond != null) {
+            writer.append("<cyclecomp:speedLowerBoundMetersPerSecond>${(point.speedMetersPerSecond - point.speedAccuracyMetersPerSecond).coerceAtLeast(0f)}</cyclecomp:speedLowerBoundMetersPerSecond>")
+            writer.append("<cyclecomp:speedUpperBoundMetersPerSecond>${point.speedMetersPerSecond + point.speedAccuracyMetersPerSecond}</cyclecomp:speedUpperBoundMetersPerSecond>")
+          }
+          point.courseDegrees?.let { writer.append("<cyclecomp:courseDegrees>$it</cyclecomp:courseDegrees>") }
           point.elevationSource?.let { writer.append("<cyclecomp:elevationSource>$it</cyclecomp:elevationSource>") }
           point.elevationAnchorQuality?.let { writer.append("<cyclecomp:elevationQuality>$it</cyclecomp:elevationQuality>") }
           point.relativeElevationMeters?.let { writer.append("<cyclecomp:relativeBarometerElevationMeters>$it</cyclecomp:relativeBarometerElevationMeters>") }
           point.barometerEpoch?.let { writer.append("<cyclecomp:barometerEpoch>$it</cyclecomp:barometerEpoch>") }
+          point.barometricPressureKilopascals?.let { writer.append("<cyclecomp:barometricPressureKilopascals>$it</cyclecomp:barometricPressureKilopascals>") }
           point.liveGradePercent?.let { writer.append("<cyclecomp:liveGradePercent>$it</cyclecomp:liveGradePercent>") }
           point.liveGradeSource?.let { writer.append("<cyclecomp:liveGradeSource>$it</cyclecomp:liveGradeSource>") }
           point.liveGradeSource?.let { writer.append("<cyclecomp:liveGradeQuality>${if (it == "gps") "gps_vertical" else "barometer_relative"}</cyclecomp:liveGradeQuality>") }
           point.liveGradeWindowMeters?.let { writer.append("<cyclecomp:liveGradeWindowMeters>$it</cyclecomp:liveGradeWindowMeters>") }
           point.liveGradeSampleCount?.let { writer.append("<cyclecomp:liveGradeSampleCount>$it</cyclecomp:liveGradeSampleCount>") }
+          point.motionState?.let { writer.append("<cyclecomp:motionState>$it</cyclecomp:motionState>") }
           point.heartRateBpm?.let { writer.append("<gpxtpx:TrackPointExtension><gpxtpx:hr>$it</gpxtpx:hr></gpxtpx:TrackPointExtension>") }
-          writer.append("</extensions>")
-        }
+        writer.append("</extensions>")
         writer.append("</trkpt>\n")
       }
       if (segmentOpen) writer.appendLine("</trkseg>")
@@ -847,21 +1050,28 @@ internal object RideTrackingEngine {
   ).apply { timeZone = TimeZone.getTimeZone("UTC") }.format(Date(timestampMillis))
 
   private fun updateElevationTotals(point: RidePoint) {
+    if (point.motionState != null && point.motionState != "moving") return
     val elevationMeters = point.relativeElevationMeters ?: point.elevationMeters ?: return
-    val source = if (point.relativeElevationMeters != null) "barometer:${point.barometerEpoch}" else point.elevationSource ?: return
+    val source = when {
+      point.relativeElevationMeters != null -> "barometer-relative:${point.barometerEpoch ?: 0}"
+      point.barometerEpoch != null -> return
+      point.elevationSource == "barometer_gps" -> "barometer-absolute"
+      point.elevationSource != null -> "absolute:${point.elevationSource}"
+      else -> return
+    }
     if (point.segmentStart || source != lastCreditedElevationSource) {
       lastCreditedElevationMeters = elevationMeters
       lastCreditedElevationDistance = accumulatedDistanceMeters
       lastCreditedElevationSource = source
       return
     }
-    if ((point.speedMetersPerSecond ?: 0f) < minimumMovingSpeedMetersPerSecond) return
+    if (point.motionState == null && (point.speedMetersPerSecond ?: 0f) < minimumMovingSpeedMetersPerSecond) return
     val previousElevationMeters = lastCreditedElevationMeters ?: run {
       lastCreditedElevationMeters = elevationMeters
       lastCreditedElevationDistance = accumulatedDistanceMeters
       return
     }
-    val barometer = point.relativeElevationMeters != null
+    val barometer = source.startsWith("barometer")
     if (accumulatedDistanceMeters - lastCreditedElevationDistance < if (barometer) 20.0 else 50.0) return
     val elevationChangeMeters = elevationMeters - previousElevationMeters
     val deadband = if (barometer) 2.5 else maxOf(5.0, (point.verticalAccuracyMeters ?: 0f) * 0.25)
@@ -879,12 +1089,40 @@ internal object RideTrackingEngine {
   private fun resetMotionMeasurements() {
     motionCoordinator.reset()
     speedSmoother.reset()
+    sensorTrace.append("policyReset", JSONObject().put("reason", "recording_reset"))
+    sensorTrace.append("speedReset", JSONObject().put("reason", "recording_reset"))
     gradeEstimator.reset()
     lastMotionLocation = null
     displayedSpeed = null
   }
 
-  private const val maximumHorizontalAccuracyMeters = 100f
+  private fun appendMotionTrace(observation: RideMotionCoordinator.Observation) {
+    val sample = observation.sample
+    val transitionName = when (observation.transition?.state) {
+      RideAutoPausePolicy.MotionState.moving -> "startedMoving"
+      RideAutoPausePolicy.MotionState.stationary -> "stoppedMoving"
+      RideAutoPausePolicy.MotionState.unknown -> "becameUnknown"
+      null -> null
+    }
+    sensorTrace.append("policy", JSONObject().put("policy", JSONObject().apply {
+      put("timestamp", sample.timestampMillis / 1000.0)
+      put("speedMetersPerSecond", observation.measuredSpeedMetersPerSecond ?: JSONObject.NULL)
+      put("horizontalAccuracyMeters", sample.accuracyMeters)
+      put("speedAccuracyMetersPerSecond", sample.speedAccuracyMetersPerSecond?.takeIf { it.isFinite() } ?: -1.0)
+      put("displacementSincePreviousMeters", observation.displacementMeters)
+      put("positionSpeedMetersPerSecond", observation.positionSpeedMetersPerSecond ?: JSONObject.NULL)
+      put("positionSpeedWindowStartedAt", observation.positionSpeedWindowStartedAtMillis?.div(1000.0) ?: JSONObject.NULL)
+      put("latitude", sample.latitude)
+      put("longitude", sample.longitude)
+      put("motionActivityIsStationary", sample.motionActivityIsStationary)
+      put("stateBefore", observation.stateBefore.name)
+      put("stateAfter", observation.stateAfter.name)
+      put("transition", transitionName ?: JSONObject.NULL)
+      put("transitionEffectiveAt", observation.transition?.effectiveAtMillis?.div(1000.0) ?: JSONObject.NULL)
+    }))
+  }
+
+  private const val maximumHorizontalAccuracyMeters = 50f
   private const val maximumDistanceCreditIntervalSeconds = 30.0
   private const val maximumPlausibleSpeedMetersPerSecond = 40.0
   private const val minimumDistanceCreditSpeedMetersPerSecond = 0.25

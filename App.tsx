@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { NativeModules, Platform, StatusBar, StyleSheet } from 'react-native';
+import { NativeModules, StatusBar, StyleSheet } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { RoutePreviewScreen } from './src/features/routes/RoutePreviewScreen';
@@ -13,7 +13,7 @@ if (__DEV__) {
 
 function App() {
   useEffect(() => {
-    if (Platform.OS === 'ios') { restoreTerrainAreaTransfer(); }
+    restoreTerrainAreaTransfer();
   }, []);
   return (
     <SafeAreaProvider style={styles.container}>

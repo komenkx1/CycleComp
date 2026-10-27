@@ -35,7 +35,7 @@ internal class RideSensorTrace {
       output = FileOutputStream(traceFile, true)
       status = "active"
       if (bytesWritten == 0L) {
-        append("header", JSONObject().put("schemaVersion", 1).put("algorithmVersion", 0).put("platform", "android"))
+        append("header", JSONObject().put("schemaVersion", 1).put("algorithmVersion", 1).put("platform", "android"))
       } else {
         append("policyReset", JSONObject().put("reason", "recorder_reopened"))
         append("speedReset", JSONObject().put("reason", "recorder_reopened"))

@@ -17,5 +17,13 @@ fun main() {
   coordinator.reset()
   for (time in 11_000L..15_000L step 1_000L) check(sample(time, -8.0, 0.0, null) == null)
   check(coordinator.state == RideAutoPausePolicy.MotionState.unknown)
+  coordinator.reset()
+  var activityStop: RideAutoPausePolicy.Transition? = null
+  for (time in 20_000L..24_000L step 1_000L) {
+    activityStop = coordinator.observe(RideMotionCoordinator.Sample(
+      -8.0, 115.0, 4.0, 0.45, 0.2, 0.0, time, motionActivityIsStationary = true,
+    )) ?: activityStop
+  }
+  check(activityStop?.state == RideAutoPausePolicy.MotionState.stationary)
   println("RideMotionCoordinator checks passed")
 }

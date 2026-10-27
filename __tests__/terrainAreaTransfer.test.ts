@@ -10,8 +10,15 @@ const mockInventory = jest.fn();
 const mockDownloadStates = jest.fn();
 const mockCancel = jest.fn();
 let mockStoredSettings: Record<string, unknown> = {};
+let mockPlatform = 'ios';
+let mockAndroidTerrainStore: {
+  areaSettings: Record<string, string>;
+  setAreaSetting: jest.Mock;
+};
 
 jest.mock('react-native', () => ({
+  Platform: { get OS() { return mockPlatform; } },
+  NativeModules: { get TerrainGridPackStore() { return mockAndroidTerrainStore; } },
   Settings: {
     get: (key: string) => mockStoredSettings[key],
     set: (settings: Record<string, unknown>) =>
@@ -55,6 +62,11 @@ beforeEach(() => {
   jest.resetModules();
   jest.clearAllMocks();
   mockStoredSettings = {};
+  mockPlatform = 'ios';
+  mockAndroidTerrainStore = {
+    areaSettings: {},
+    setAreaSetting: jest.fn(),
+  };
   installedPacks = [];
   states = [];
   mockPrepare.mockResolvedValue(catalog);
@@ -68,6 +80,19 @@ beforeEach(() => {
       states.push(transfer);
     }
   });
+});
+
+test('Android restores an interrupted area from native settings after a restart', async () => {
+  mockPlatform = 'android';
+  mockAndroidTerrainStore.areaSettings = {
+    CycleCompPendingTerrainArea: JSON.stringify({ bounds, areaName: 'Bali', autoResume: true }),
+  };
+  jest.resetModules();
+  queue = require('../src/features/elevation/terrainAreaTransfer');
+  await queue.restoreTerrainAreaTransfer();
+  expect(mockPrepare).toHaveBeenCalledWith([bounds], expect.any(Function));
+  expect(mockAndroidTerrainStore.setAreaSetting).toHaveBeenCalledWith('CycleCompPendingTerrainArea', '');
+  expect(mockStoredSettings.CycleCompPendingTerrainArea).toBeUndefined();
 });
 
 function installedWestPack(): TerrainGridPackSummary {

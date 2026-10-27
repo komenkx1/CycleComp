@@ -64,12 +64,25 @@ class TerrainGridPackModule(private val reactContext: ReactApplicationContext) :
         }
       }
       val staleBefore = System.currentTimeMillis() - 24 * 60 * 60 * 1000L
-      storage.listFiles()?.filter { it.isDirectory && it.name.startsWith(".install-") && it.lastModified() < staleBefore }
+      storage.listFiles()?.filter { it.isDirectory && (it.name.startsWith(".install-") || it.name.startsWith(".download-")) && it.lastModified() < staleBefore }
         ?.forEach { it.deleteRecursively() }
     }
   }
 
   override fun getName() = "TerrainGridPackStore"
+
+  override fun getConstants(): Map<String, Any> {
+    val areaSettings = reactContext.getSharedPreferences("terrain_area_transfer", 0)
+    return mapOf("areaSettings" to mapOf(
+      "CycleCompPendingTerrainArea" to (areaSettings.getString("CycleCompPendingTerrainArea", "") ?: ""),
+      "CycleCompCompletedTerrainAreas" to (areaSettings.getString("CycleCompCompletedTerrainAreas", "") ?: ""),
+    ))
+  }
+
+  @ReactMethod fun setAreaSetting(key: String, value: String) {
+    if (key !in setOf("CycleCompPendingTerrainArea", "CycleCompCompletedTerrainAreas")) return
+    reactContext.getSharedPreferences("terrain_area_transfer", 0).edit().putString(key, value).commit()
+  }
 
   override fun invalidate() {
     executor.execute {
@@ -165,15 +178,20 @@ class TerrainGridPackModule(private val reactContext: ReactApplicationContext) :
     publishStates()
     executor.execute {
       var staging: File? = null
+      var downloadComplete = false
       try {
-        staging = newStagingDirectory()
+        staging = File(storage, ".download-$chunkID-$databaseSha256").apply {
+          require(isDirectory || mkdirs()) { "Folder sementara medan tidak dapat dibuat." }
+          setLastModified(System.currentTimeMillis())
+        }
         fetchFile(download, "$url/manifest.json", File(staging, "manifest.json"), TerrainGridPackReader.MAX_MANIFEST_BYTES)
         fetchFile(download, "$url/manifest.ed25519", File(staging, "manifest.ed25519"), 64)
         val manifest = TerrainGridPackReader.validateManifest(staging, databaseSha256)
         download.totalBytes = manifest.getJSONArray("files").getJSONObject(0).getLong("sizeBytes")
         require(storage.usableSpace > download.totalBytes * 2 + 64 * 1024 * 1024L) { "Ruang penyimpanan tidak cukup untuk paket medan." }
         download.state = "downloading"; publishStates()
-        fetchFile(download, "$url/$databaseSha256.sqlite", File(staging, "terrain.sqlite"), download.totalBytes)
+        fetchFile(download, "$url/$databaseSha256.sqlite", File(staging, "terrain.sqlite"), download.totalBytes, resumable = true)
+        downloadComplete = true
         checkNotCancelled(download)
         download.state = "installing"; publishStates()
         val installed = installStaging(staging)
@@ -186,7 +204,7 @@ class TerrainGridPackModule(private val reactContext: ReactApplicationContext) :
         promise.reject(if (download.cancelled) "download_cancelled" else "terrain_pack_error", download.failure, error)
       } finally {
         download.connection?.disconnect()
-        staging?.deleteRecursively()
+        if (download.cancelled || downloadComplete) staging?.deleteRecursively()
         downloads.remove(chunkID, download)
         publishStates()
       }
@@ -300,15 +318,29 @@ class TerrainGridPackModule(private val reactContext: ReactApplicationContext) :
     } }
   }
   private fun checkNotCancelled(download: Download) { if (download.cancelled) error("Unduhan medan dibatalkan.") }
-  private fun fetchFile(download: Download, url: String, destination: File, limit: Long) {
+  private fun fetchFile(download: Download, url: String, destination: File, limit: Long, resumable: Boolean = false) {
     checkNotCancelled(download)
+    var previousBytes = if (resumable && destination.isFile) destination.length() else 0L
+    if (previousBytes > limit) { destination.delete(); previousBytes = 0 }
+    if (resumable && previousBytes == limit) return
     val connection = URL(url).openConnection() as HttpURLConnection
     download.connection = connection
     try {
       connection.connectTimeout = 30_000; connection.readTimeout = 30_000
-      require(connection.responseCode == 200) { "Server medan merespons HTTP ${connection.responseCode}." }
-      connection.inputStream.use { input -> destination.outputStream().buffered().use { output ->
-        val buffer = ByteArray(64 * 1024); var written = 0L; var lastEvent = 0L
+      if (previousBytes > 0) connection.setRequestProperty("Range", "bytes=$previousBytes-")
+      val responseCode = connection.responseCode
+      if (previousBytes > 0 && responseCode == 206) {
+        val expectedRange = Regex("^bytes (\\d+)-(\\d+)/(\\d+)$").matchEntire(connection.getHeaderField("Content-Range") ?: "")
+        require(expectedRange != null && expectedRange.groupValues[1].toLongOrNull() == previousBytes &&
+          expectedRange.groupValues[2].toLongOrNull() == limit - 1 && expectedRange.groupValues[3].toLongOrNull() == limit) {
+          "Rentang unduhan medan tidak sesuai."
+        }
+      } else {
+        require(responseCode == 200) { "Server medan merespons HTTP $responseCode." }
+        previousBytes = 0
+      }
+      connection.inputStream.use { input -> java.io.FileOutputStream(destination, previousBytes > 0).buffered().use { output ->
+        val buffer = ByteArray(64 * 1024); var written = previousBytes; var lastEvent = 0L
         while (true) {
           checkNotCancelled(download)
           val count = input.read(buffer); if (count < 0) break
@@ -320,6 +352,7 @@ class TerrainGridPackModule(private val reactContext: ReactApplicationContext) :
             if (now - lastEvent >= 250) { lastEvent = now; publishProgress(download); publishStates() }
           }
         }
+        if (resumable) require(written == limit) { "Unduhan medan belum lengkap." }
       } }
       checkNotCancelled(download)
     } finally { connection.disconnect(); download.connection = null }

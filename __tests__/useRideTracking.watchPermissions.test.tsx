@@ -12,6 +12,7 @@ jest.mock('react-native', () => ({
       getRideState: jest.fn().mockResolvedValue({ status: 'idle' }),
       setKeepScreenOn: jest.fn().mockResolvedValue(true),
       setWatchHeartRateEnabled: jest.fn().mockResolvedValue({ status: 'idle', watchHeartRateEnabled: true }),
+      startRide: jest.fn().mockResolvedValue({ status: 'active' }),
     },
   },
   PermissionsAndroid: {
@@ -19,6 +20,9 @@ jest.mock('react-native', () => ({
       BLUETOOTH_SCAN: 'android.permission.BLUETOOTH_SCAN',
       BLUETOOTH_CONNECT: 'android.permission.BLUETOOTH_CONNECT',
       ACCESS_FINE_LOCATION: 'android.permission.ACCESS_FINE_LOCATION',
+      ACCESS_COARSE_LOCATION: 'android.permission.ACCESS_COARSE_LOCATION',
+      ACTIVITY_RECOGNITION: 'android.permission.ACTIVITY_RECOGNITION',
+      POST_NOTIFICATIONS: 'android.permission.POST_NOTIFICATIONS',
     },
     RESULTS: { GRANTED: 'granted', DENIED: 'denied' },
     requestMultiple: jest.fn(),
@@ -87,5 +91,15 @@ describe('Watch 5 Android permission', () => {
     await act(async () => { await hook.setWatchHeartRateEnabled(true); });
     expect(PermissionsAndroid.requestMultiple).not.toHaveBeenCalled();
     expect(NativeModules.RideTracking.setWatchHeartRateEnabled).toHaveBeenCalledWith(true);
+  });
+
+  it('continues GPS recording when optional activity recognition is denied', async () => {
+    (PermissionsAndroid.requestMultiple as jest.Mock).mockResolvedValue({
+      [PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION]: 'granted',
+      [PermissionsAndroid.PERMISSIONS.ACTIVITY_RECOGNITION]: 'denied',
+    });
+    await act(async () => { await hook.startRide(); });
+    expect(NativeModules.RideTracking.startRide).toHaveBeenCalled();
+    expect(hook.rideSnapshot.status).toBe('active');
   });
 });

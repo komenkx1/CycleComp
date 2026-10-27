@@ -257,6 +257,9 @@ export function useRideTracking() {
         PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
         PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION,
       ];
+      if (Number(Platform.Version) >= 29) {
+        permissionsToRequest.push(PermissionsAndroid.PERMISSIONS.ACTIVITY_RECOGNITION);
+      }
       if (Number(Platform.Version) >= 33) {
         permissionsToRequest.push(PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS);
       }

@@ -9,6 +9,14 @@ import java.io.File
 
 internal object RideTrackingRegression {
   fun run(targetContext: Context) {
+    val activityEvidence = RideActivityEvidence()
+    activityEvidence.update(80, 10_000)
+    check(activityEvidence.isStationary(14_000))
+    check(!activityEvidence.isStationary(16_000))
+    activityEvidence.update(20, 9_000)
+    check(activityEvidence.isStationary(14_000))
+    activityEvidence.update(40, 15_000)
+    check(!activityEvidence.isStationary(15_000))
     val testDirectory = File(targetContext.cacheDir, "ride-regression-${System.nanoTime()}")
     check(testDirectory.mkdirs())
     val preferenceName = "ride-regression-${System.nanoTime()}"
@@ -58,6 +66,8 @@ internal object RideTrackingRegression {
       Thread.sleep(30)
       val followingPoint = RideTrackingEngine.onLocation(testContext, location(-7.99899, System.currentTimeMillis()))!!
       check(followingPoint["newSegment"] == false)
+      Thread.sleep(1_050)
+      RideTrackingEngine.onLocation(testContext, location(-7.99896, System.currentTimeMillis()))
       check((RideTrackingEngine.snapshot(testContext)["distanceMeters"] as Double) > distanceBeforePause)
       val blockedRidesDirectory = File(testDirectory, "Rides")
       blockedRidesDirectory.writeText("blocked")
@@ -68,6 +78,33 @@ internal object RideTrackingRegression {
       check(stateAfterFailure["pointCount"] == stateBeforeFailure["pointCount"])
       check(blockedRidesDirectory.delete())
       RideTrackingEngine.finish(testContext)
+      RideTrackingEngine.setDiagnostics(testContext, true)
+      RideTrackingEngine.start(testContext)
+      repeat(4) { sampleIndex ->
+        Thread.sleep(1_050)
+        if (sampleIndex == 1) {
+          check(RideTrackingEngine.onLocation(testContext, location(-8.0, System.currentTimeMillis() - 10_000)) == null)
+        }
+        RideTrackingEngine.onLocation(testContext, location(-8.0 + sampleIndex * 0.00003, System.currentTimeMillis()))
+      }
+      RideTrackingEngine.pause(testContext)
+      RideTrackingEngine.resume(testContext)
+      Thread.sleep(30)
+      RideTrackingEngine.onLocation(testContext, location(-7.99985, System.currentTimeMillis()))
+      val finishedRide = RideTrackingEngine.finish(testContext)
+      val recordedGpx = File(android.net.Uri.parse(finishedRide["fileUrl"] as String).path!!).readText()
+      check(recordedGpx.contains("algorithmVersion=\"3\""))
+      check(recordedGpx.contains("unknownMotionSeconds=\""))
+      check(recordedGpx.contains("kind=\"motion_started\""))
+      check(recordedGpx.contains("kind=\"manual_paused\""))
+      check(recordedGpx.contains("kind=\"resumed\""))
+      check(recordedGpx.contains("<cyclecomp:horizontalAccuracyMeters>"))
+      check(recordedGpx.contains("<cyclecomp:speedAccuracyMetersPerSecond>"))
+      check(recordedGpx.contains("<cyclecomp:motionState>"))
+      check((finishedRide["unknownMotionSeconds"] as Double) > 0.0)
+      val sensorTraceFile = File(android.net.Uri.parse(finishedRide["sensorTraceFileUrl"] as String).path!!)
+      sensorTraceFile.copyTo(File(targetContext.cacheDir, "android-sensor-replay-fixture.jsonl"), overwrite = true)
+      RideTrackingEngine.setDiagnostics(testContext, false)
 
       RideTrackingEngine.setAutoPause(testContext, true)
       RideTrackingEngine.start(testContext)

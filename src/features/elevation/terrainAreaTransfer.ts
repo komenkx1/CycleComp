@@ -1,4 +1,4 @@
-import { Settings } from 'react-native';
+import { NativeModules, Platform, Settings } from 'react-native';
 
 import type { RouteBounds } from '../../domain/routes/gpx/GpxRoute';
 import { boundsOverlap } from './terrainMapAreaCoverage';
@@ -16,6 +16,27 @@ import {
 
 const PENDING_AREA_KEY = 'CycleCompPendingTerrainArea';
 const COMPLETED_AREAS_KEY = 'CycleCompCompletedTerrainAreas';
+
+const androidTerrainStore = Platform?.OS === 'android'
+  ? NativeModules?.TerrainGridPackStore as {
+      areaSettings?: Record<string, string>;
+      setAreaSetting(key: string, value: string): void;
+    } | undefined
+  : undefined;
+const androidAreaSettings = { ...androidTerrainStore?.areaSettings };
+
+function getAreaSetting(key: string): unknown {
+  return androidTerrainStore ? androidAreaSettings[key] : Settings.get(key);
+}
+
+function setAreaSetting(key: string, value: string) {
+  if (androidTerrainStore) {
+    androidAreaSettings[key] = value;
+    androidTerrainStore.setAreaSetting(key, value);
+  } else {
+    Settings.set({ [key]: value });
+  }
+}
 
 export type TerrainAreaReceipt = {
   bounds: RouteBounds;
@@ -72,13 +93,13 @@ function rememberTransfer(autoResume: boolean) {
   if (!currentTransfer) {
     return;
   }
-  Settings.set({
-    [PENDING_AREA_KEY]: JSON.stringify({
+  setAreaSetting(
+    PENDING_AREA_KEY, JSON.stringify({
       bounds: currentTransfer.bounds,
       areaName: currentTransfer.areaName,
       autoResume,
     }),
-  });
+  );
 }
 
 export function startTerrainAreaTransfer(
@@ -208,7 +229,7 @@ async function downloadArea(bounds: RouteBounds) {
         completedBytes: totalBytes,
         error: null,
       });
-      Settings.set({ [PENDING_AREA_KEY]: '' });
+      setAreaSetting(PENDING_AREA_KEY, '');
     }
   } catch (error) {
     const cancelled =
@@ -230,7 +251,7 @@ async function downloadArea(bounds: RouteBounds) {
 }
 
 export function getTerrainAreaReceipts(): TerrainAreaReceipt[] {
-  const storedReceipts = Settings.get(COMPLETED_AREAS_KEY);
+  const storedReceipts = getAreaSetting(COMPLETED_AREAS_KEY);
   if (typeof storedReceipts !== 'string' || !storedReceipts) {
     return [];
   }
@@ -296,8 +317,8 @@ function rememberCompletedArea(
         (coordinate, index) => coordinate === bounds[index],
       ),
   );
-  Settings.set({
-    [COMPLETED_AREAS_KEY]: JSON.stringify([
+  setAreaSetting(
+    COMPLETED_AREAS_KEY, JSON.stringify([
       ...otherAreas,
       {
         bounds,
@@ -309,7 +330,7 @@ function rememberCompletedArea(
         })),
       },
     ]),
-  });
+  );
 }
 
 export async function pauseTerrainAreaTransfer(): Promise<void> {
@@ -343,7 +364,7 @@ export function restoreTerrainAreaTransfer() {
     return;
   }
   try {
-    const storedTransfer = Settings.get(PENDING_AREA_KEY);
+    const storedTransfer = getAreaSetting(PENDING_AREA_KEY);
     if (typeof storedTransfer !== 'string' || !storedTransfer) {
       return;
     }
@@ -375,7 +396,7 @@ export function restoreTerrainAreaTransfer() {
       publishTransfer({});
     }
   } catch {
-    Settings.set({ [PENDING_AREA_KEY]: '' });
+    setAreaSetting(PENDING_AREA_KEY, '');
   }
 }
 

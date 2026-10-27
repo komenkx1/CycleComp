@@ -1,15 +1,19 @@
 package com.cyclecomp
 
 import android.app.Instrumentation
+import android.content.ContextWrapper
 import android.database.sqlite.SQLiteDatabase
 import android.os.Bundle
 import android.util.Base64
 import com.google.crypto.tink.subtle.Ed25519Sign
+import com.facebook.react.bridge.BridgeReactContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.net.ServerSocket
+import java.util.concurrent.atomic.AtomicReference
 
 class CycleCompInstrumentationRunner : Instrumentation() {
   override fun onCreate(arguments: Bundle?) {
@@ -21,12 +25,96 @@ class CycleCompInstrumentationRunner : Instrumentation() {
     val report = Bundle()
     try {
       checkSignedGrid()
+      checkTerrainAreaSettings()
+      checkTerrainDownloadResume()
       RideTrackingRegression.run(targetContext)
       report.putString("stream", "Terrain signature and grid checks passed. Ride pause, recovery, auto-pause and simulated HR export checks passed.\n")
       finish(android.app.Activity.RESULT_OK, report)
     } catch (error: Throwable) {
       report.putString("stream", android.util.Log.getStackTraceString(error))
       finish(android.app.Activity.RESULT_CANCELED, report)
+    }
+  }
+
+  private fun checkTerrainDownloadResume() {
+    val directory = File(targetContext.cacheDir, "terrain-resume-check").apply { deleteRecursively(); mkdirs() }
+    val isolatedContext = object : ContextWrapper(targetContext) {
+      override fun getApplicationContext() = this
+      override fun getFilesDir(): File = directory
+    }
+    val module = TerrainGridPackModule(BridgeReactContext(isolatedContext))
+    val downloadClass = Class.forName("com.cyclecomp.TerrainGridPackModule\$Download")
+    val constructor = downloadClass.declaredConstructors.first { it.parameterCount == 10 }.apply { isAccessible = true }
+    val fetch = TerrainGridPackModule::class.java.getDeclaredMethod("fetchFile", downloadClass,
+      String::class.java, File::class.java, java.lang.Long.TYPE, java.lang.Boolean.TYPE).apply { isAccessible = true }
+    val content = "0123456789".toByteArray()
+    val file = File(directory, "partial.sqlite")
+    try {
+      fun runRequest(status: String, headers: String, body: ByteArray, shouldSucceed: Boolean) {
+        val requestHeaders = AtomicReference("")
+        ServerSocket(0).use { server ->
+          val responder = Thread {
+            server.accept().use { socket ->
+              val input = socket.getInputStream().bufferedReader()
+              val request = StringBuilder()
+              while (true) {
+                val line = input.readLine() ?: break
+                if (line.isEmpty()) break
+                request.append(line).append('\n')
+              }
+              requestHeaders.set(request.toString())
+              socket.getOutputStream().use { output ->
+                output.write("HTTP/1.1 $status\r\nContent-Length: ${body.size}\r\n$headers\r\n".toByteArray())
+                output.write(body)
+              }
+            }
+          }.apply { start() }
+          val download = constructor.newInstance("test", "release", "chunk", "a".repeat(64),
+            "downloading", 0L, content.size.toLong(), null, false, null)
+          val succeeded = runCatching {
+            fetch.invoke(module, download, "http://127.0.0.1:${server.localPort}/terrain.sqlite", file, content.size.toLong(), true)
+          }.isSuccess
+          responder.join(5_000)
+          check(!responder.isAlive && requestHeaders.get().contains("Range: bytes=4-", ignoreCase = true))
+          check(succeeded == shouldSucceed)
+        }
+      }
+      file.writeBytes(content.copyOfRange(0, 4))
+      runRequest("206 Partial Content", "Content-Range: bytes 4-9/10\r\n", content.copyOfRange(4, 10), true)
+      check(file.readBytes().contentEquals(content))
+      file.writeBytes(content.copyOfRange(0, 4))
+      runRequest("200 OK", "", content, true)
+      check(file.readBytes().contentEquals(content))
+      file.writeBytes(content.copyOfRange(0, 4))
+      runRequest("206 Partial Content", "Content-Range: bytes 3-9/10\r\n", content.copyOfRange(3, 10), false)
+      check(file.readBytes().contentEquals(content.copyOfRange(0, 4)))
+    } finally {
+      module.invalidate()
+      directory.deleteRecursively()
+    }
+  }
+
+  private fun checkTerrainAreaSettings() {
+    val directory = File(targetContext.cacheDir, "terrain-settings-check").apply { deleteRecursively(); mkdirs() }
+    val isolatedContext = object : ContextWrapper(targetContext) {
+      override fun getApplicationContext() = this
+      override fun getFilesDir(): File = directory
+      override fun getSharedPreferences(name: String, mode: Int) =
+        targetContext.getSharedPreferences("instrumentation_$name", mode)
+    }
+    val preferences = isolatedContext.getSharedPreferences("terrain_area_transfer", 0)
+    try {
+      preferences.edit().clear().commit()
+      val first = TerrainGridPackModule(BridgeReactContext(isolatedContext))
+      first.setAreaSetting("CycleCompPendingTerrainArea", "pending-area")
+      val restored = TerrainGridPackModule(BridgeReactContext(isolatedContext))
+      val settings = restored.constants["areaSettings"] as Map<*, *>
+      check(settings["CycleCompPendingTerrainArea"] == "pending-area")
+      first.invalidate()
+      restored.invalidate()
+    } finally {
+      preferences.edit().clear().commit()
+      directory.deleteRecursively()
     }
   }
 
