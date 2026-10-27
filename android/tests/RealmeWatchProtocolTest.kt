@@ -1,0 +1,25 @@
+package com.cyclecomp
+
+fun main() {
+  val encodedResponse = "475556575757575757570f57573bcd576f5957".chunked(2)
+    .map { it.toInt(16).toByte() }.toByteArray()
+  val decoded = RealmeWatchProtocol.encode(encodedResponse)
+  check(RealmeWatchProtocol.heartRate(decoded) == 88)
+  check(RealmeWatchProtocol.encode(decoded).contentEquals(encodedResponse))
+  check(RealmeWatchProtocol.heartRate(decoded.copyOf().apply { this[2] = 2 }) == null)
+  check(RealmeWatchProtocol.heartRate(decoded.copyOf().apply { this[10] = 0 }) == null)
+  check(RealmeWatchProtocol.heartRate(decoded.copyOf(10)) == null)
+  check(RealmeWatchProtocol.heartRate(decoded.copyOf().apply { this[0] = 0x02; this[1] = 0x01 }) == null)
+  val time = byteArrayOf(13, 14, 46, 22)
+  val start = RealmeWatchProtocol.start(time)
+  check(start.size == 13 && start[6] == 50.toByte() && start[12] == 0.toByte())
+  val update = RealmeWatchProtocol.update(time, 0x12345, 0x04030201)
+  check(update.size == 14 && update.sliceArray(7..9).contentEquals(byteArrayOf(0x45, 0x23, 1)))
+  check(update.sliceArray(10..13).contentEquals(byteArrayOf(1, 2, 3, 4)))
+  val end = RealmeWatchProtocol.end(time, 90, 500)
+  check(end.size == 15 && end[13] == 50.toByte() && end[14] == 0.toByte())
+  val clamped = RealmeWatchProtocol.update(time, Int.MAX_VALUE, -1)
+  check(clamped.sliceArray(7..9).contentEquals(byteArrayOf(-1, -1, 15)))
+  check(clamped.sliceArray(10..13).contentEquals(byteArrayOf(0, 0, 0, 0)))
+  println("Watch 5 packet parsing and cycling command checks passed")
+}

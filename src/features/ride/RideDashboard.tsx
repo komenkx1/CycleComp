@@ -544,14 +544,14 @@ export function RideDashboard({
                   label={rideIsRecoverable ? 'Pulihkan' : 'Lanjutkan'}
                   accessibilityLabel={rideIsRecoverable ? 'Pulihkan' : 'Lanjutkan'}
                   onPress={onResume}
-                  disabled={busy}
+                  disabled={busy || Boolean(ride.recordingErrorMessage)}
                 />
               )}
               <DashboardButton
                 label={busy ? 'Menyimpan...' : 'Selesai'}
                 accessibilityLabel="Selesai"
                 onPress={onFinish}
-                disabled={busy}
+                disabled={busy || Boolean(ride.recordingErrorMessage)}
                 emphasized
               />
             </View>

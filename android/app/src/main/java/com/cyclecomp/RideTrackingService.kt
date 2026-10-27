@@ -24,6 +24,7 @@ class RideTrackingService : Service(), LocationListener {
     running = true
     locationManager = getSystemService(LOCATION_SERVICE) as LocationManager
     createNotificationChannel()
+    RideTrackingEngine.initializeWatch(this)
   }
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -39,6 +40,13 @@ class RideTrackingService : Service(), LocationListener {
     if (action == null && RideTrackingEngine.snapshot(this)["status"] == "recoveryNeeded") {
       runCatching { RideTrackingEngine.resume(this) }
     }
+    val rideState = RideTrackingEngine.snapshot(this)
+    if (rideState["status"] != "active" && !(rideState["status"] == "paused" && rideState["autoPaused"] == true)) {
+      stopForeground(STOP_FOREGROUND_REMOVE)
+      stopSelf(startId)
+      return START_NOT_STICKY
+    }
+    RideTrackingEngine.startSensors(this)
     startLocationUpdates()
     return START_STICKY
   }
@@ -96,7 +104,16 @@ class RideTrackingService : Service(), LocationListener {
   }
 
   override fun onLocationChanged(location: Location) {
-    RideTrackingEngine.onLocation(this, location)?.let(::publishSnapshot)
+    try {
+      RideTrackingEngine.onLocation(this, location)?.let(::publishSnapshot)
+    } catch (_: Exception) {
+      runCatching { RideTrackingEngine.pause(this) }
+      publishSnapshot(RideTrackingEngine.snapshot(this, includeTrack = false))
+      publishError("Perekaman dijeda karena titik GPS tidak dapat disimpan.")
+      stopLocationUpdates()
+      stopForeground(STOP_FOREGROUND_REMOVE)
+      stopSelf()
+    }
   }
 
   override fun onProviderDisabled(provider: String) {
@@ -105,6 +122,7 @@ class RideTrackingService : Service(), LocationListener {
 
   override fun onDestroy() {
     stopLocationUpdates()
+    RideTrackingEngine.stopSensors()
     running = false
     super.onDestroy()
   }

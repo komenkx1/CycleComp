@@ -26,6 +26,7 @@ type NavigationGuidanceBannerProps = {
   climbAlert: ClimbAlertState;
   routeName?: string;
   isPaused?: boolean;
+  needsRecovery?: boolean;
   accuracyMeters?: number | null;
   soundEnabled?: boolean;
   onToggleSound?: () => void;
@@ -41,6 +42,7 @@ export function NavigationGuidanceBanner({
   climbAlert,
   routeName,
   isPaused = false,
+  needsRecovery = false,
   accuracyMeters = null,
   soundEnabled = true,
   onToggleSound,
@@ -86,7 +88,7 @@ export function NavigationGuidanceBanner({
               <Text numberOfLines={1} style={styles.collapsedMainText}>
                 {instruction
                   ? `${formatNavigationDistance(instruction.distanceMeters)} · ${instruction.title}`
-                  : `Navigasi Bebas · ${isPaused ? 'Jeda' : 'Merekam'}`}
+                  : `Navigasi Bebas · ${needsRecovery ? 'Perlu dipulihkan' : isPaused ? 'Jeda' : 'Merekam'}`}
               </Text>
               {hasClimb ? (
                 <Text numberOfLines={1} style={styles.collapsedClimbText}>
@@ -127,11 +129,11 @@ export function NavigationGuidanceBanner({
                     <View
                       style={[
                         styles.statusDot,
-                        isPaused ? styles.pausedDot : styles.liveDot,
+                        isPaused || needsRecovery ? styles.pausedDot : styles.liveDot,
                       ]}
                     />
                     <Text style={styles.statusLabel}>
-                      {isPaused ? 'Jeda' : 'Merekam'}
+                      {needsRecovery ? 'Perlu dipulihkan' : isPaused ? 'Jeda' : 'Merekam'}
                     </Text>
                   </View>
                   <Pressable
@@ -147,7 +149,7 @@ export function NavigationGuidanceBanner({
                 </View>
               </View>
               <Text numberOfLines={1} style={styles.instructionText}>
-                {routeName ?? 'Merekam rute GPS tanpa GPX'}
+                {routeName ?? (needsRecovery ? 'Pulihkan perjalanan untuk melanjutkan' : isPaused ? 'Perekaman dijeda' : 'Merekam rute GPS tanpa GPX')}
               </Text>
             </View>
           </View>

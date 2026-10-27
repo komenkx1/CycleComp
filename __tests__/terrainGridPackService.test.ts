@@ -1,9 +1,10 @@
-import { NativeEventEmitter, NativeModules } from 'react-native';
+import { NativeEventEmitter, NativeModules, Platform } from 'react-native';
 import {
   cancelTerrainPackDownload,
   downloadAndInstallTerrainPack,
   fetchRemoteTerrainCatalog,
   getTerrainPackDownloadStates,
+  getTerrainGridPackInventory,
   lookupInstalledTerrainElevations,
   prepareTerrainForOfflineAreas,
   sampleInstalledTerrainPacks,
@@ -44,6 +45,21 @@ describe('terrainGridPackService', () => {
   afterEach(() => {
     global.fetch = originalFetch;
     jest.useRealTimers();
+  });
+
+  it('uses the native terrain store on Android', async () => {
+    const originalPlatform = Platform.OS;
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'android' });
+    mockNativeTerrainStore.getInventory.mockResolvedValue({
+      packs: [], unavailablePackageCount: 0, trustedSigningKeyCount: 2, allowUnsignedPilot: false,
+    });
+    try {
+      const inventory = await getTerrainGridPackInventory();
+      expect(inventory.trustedSigningKeyCount).toBe(2);
+      expect(mockNativeTerrainStore.getInventory).toHaveBeenCalledTimes(1);
+    } finally {
+      Object.defineProperty(Platform, 'OS', { configurable: true, value: originalPlatform });
+    }
   });
 
   it('preserves negative, zero, unknown and pack provenance samples', async () => {

@@ -149,6 +149,7 @@ export function RoutePreviewScreen() {
     trackSegments,
     lastFinishedRide,
     rideError,
+    watchPermissionError,
     rideBusy,
     rideChecking,
     refreshRide,
@@ -1101,9 +1102,7 @@ export function RoutePreviewScreen() {
           <View style={styles.watchHeartRateDescription}>
             <Text style={styles.watchHeartRateTitle}>HR · realme Watch 5</Text>
             <Text style={styles.watchHeartRateHint}>
-              {Platform.OS === 'android'
-                ? 'Sensor detak jantung jam belum tersedia di Android.'
-                : rideSnapshot.watchHeartRateMessage ?? (
+              {watchPermissionError ?? rideSnapshot.watchHeartRateMessage ?? (
                 rideSnapshot.watchHeartRateEnabled
                   ? rideSnapshot.watchHeartRateStatus === 'ready'
                     ? 'Jam siap. Mulai Outdoor Cycle di jam dulu, lalu tap Mulai di CycleComp.'
@@ -1114,7 +1113,7 @@ export function RoutePreviewScreen() {
           </View>
           <AmoledSwitch
             accessibilityLabel="Gunakan HR realme Watch 5 selama ride"
-            disabled={Platform.OS === 'android' || rideBusy || rideChecking || rideSnapshot.watchHeartRateStatus === 'stopping'}
+            disabled={rideBusy || rideChecking || rideIsOpen || rideSnapshot.watchHeartRateStatus === 'stopping'}
             value={rideSnapshot.watchHeartRateEnabled ?? false}
             onValueChange={enabled => { setWatchHeartRateEnabled(enabled); }}
           />
@@ -1137,14 +1136,12 @@ export function RoutePreviewScreen() {
           <View style={styles.watchHeartRateDescription}>
             <Text style={styles.watchHeartRateTitle}>Diagnostik sensor</Text>
             <Text style={styles.watchHeartRateHint}>
-              {Platform.OS === 'android'
-                ? 'Diagnostik gerak belum tersedia di Android.'
-                : 'Rekam lokasi tepat, kualitas GPS, dan ringkasan gerak untuk memeriksa speed dan auto-pause. File lokal maksimal 10 MB; bagikan hanya saat diperlukan.'}
+              Rekam lokasi tepat, kualitas GPS, dan ringkasan gerak untuk memeriksa speed dan auto-pause. File lokal maksimal 10 MB; bagikan hanya saat diperlukan.
             </Text>
           </View>
           <AmoledSwitch
             accessibilityLabel="Rekam diagnostik sensor selama ride"
-            disabled={Platform.OS === 'android' || rideBusy || rideChecking || rideIsOpen}
+            disabled={rideBusy || rideChecking || rideIsOpen}
             value={rideSnapshot.sensorDiagnosticsEnabled ?? false}
             onValueChange={enabled => { setSensorDiagnosticsEnabled(enabled); }}
           />
@@ -1394,6 +1391,7 @@ export function RoutePreviewScreen() {
               climbAlert={climbAlert}
               routeName={importedRoute ? importedRoute.name : undefined}
               isPaused={rideSnapshot.status === 'paused'}
+              needsRecovery={rideSnapshot.status === 'recoveryNeeded'}
               accuracyMeters={rideSnapshot.horizontalAccuracyMeters}
               soundEnabled={soundEnabled}
               onToggleSound={handleToggleSound}

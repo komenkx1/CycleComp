@@ -61,6 +61,18 @@ describe('NavigationGuidanceBanner', () => {
     ReactTestRenderer.act(() => screen.unmount());
   });
 
+  test('does not claim a ride is recording when recovery is required', () => {
+    let renderer: ReactTestRenderer.ReactTestRenderer;
+    ReactTestRenderer.act(() => {
+      renderer = ReactTestRenderer.create(
+        <NavigationGuidanceBanner instruction={null} climbAlert={noClimb} needsRecovery />,
+      );
+    });
+    expect(renderer!.root.findByProps({ children: 'Perlu dipulihkan' })).toBeTruthy();
+    expect(renderer!.root.findByProps({ children: 'Pulihkan perjalanan untuk melanjutkan' })).toBeTruthy();
+    ReactTestRenderer.act(() => renderer!.unmount());
+  });
+
   test('renders Google Maps turn maneuver, distance, and Then preview pill', () => {
     let renderer: ReactTestRenderer.ReactTestRenderer;
     ReactTestRenderer.act(() => {

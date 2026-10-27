@@ -59,6 +59,7 @@ class RideTrackingModule(private val reactContext: ReactApplicationContext) : Re
       @Suppress("DEPRECATION")
       reactContext.registerReceiver(rideReceiver, intentFilter)
     }
+    RideTrackingEngine.initializeWatch(reactContext)
   }
 
   override fun invalidate() {
@@ -149,8 +150,9 @@ class RideTrackingModule(private val reactContext: ReactApplicationContext) : Re
   }
 
   @ReactMethod
-  fun shareSensorTrace(fileUrl: String, promise: Promise) {
-    promise.reject("sensor_trace_unavailable", "Diagnostik sensor belum tersedia pada Android.")
+  fun shareSensorTrace(fileUrl: String, promise: Promise) = resolve(promise) {
+    shareFile(RideTrackingEngine.savedSensorTraceFile(reactContext, fileUrl), "application/x-ndjson")
+    true
   }
 
   @ReactMethod

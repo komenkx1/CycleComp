@@ -1,4 +1,4 @@
-import { NativeEventEmitter, NativeModules, Platform } from 'react-native';
+import { NativeEventEmitter, NativeModules } from 'react-native';
 
 import type { RouteBounds, RouteCoordinate } from '../../domain/routes/gpx/GpxRoute';
 import { CYCLECOMP_VPS_BASE_URL } from '../maps/offlineMapSource';
@@ -474,12 +474,6 @@ function validateNativeSample(sample: OfflineTerrainSample): OfflineTerrainSampl
 }
 
 function requireNativeTerrainStore(): NativeTerrainGridPackStore {
-  if (Platform.OS !== 'ios') {
-    throw new TerrainGridPackServiceError(
-      'Pengelolaan paket medan offline belum tersedia pada Android.',
-    );
-  }
-
   const nativeTerrainStore = NativeModules.TerrainGridPackStore as
     | NativeTerrainGridPackStore
     | undefined;
