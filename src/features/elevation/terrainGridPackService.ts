@@ -476,7 +476,7 @@ function validateNativeSample(sample: OfflineTerrainSample): OfflineTerrainSampl
 function requireNativeTerrainStore(): NativeTerrainGridPackStore {
   if (Platform.OS !== 'ios') {
     throw new TerrainGridPackServiceError(
-      'Penyimpanan paket medan offline saat ini hanya tersedia di iOS.',
+      'Pengelolaan paket medan offline belum tersedia pada Android.',
     );
   }
 

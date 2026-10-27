@@ -25,7 +25,7 @@ CycleComp is an iOS-first cycling app built with React Native. It brings route p
 
 ## Project status
 
-CycleComp is under active development. The iOS app is the current focus. Some guidance, sensor, background-tracking, and terrain behavior still needs broader physical-device validation; simulator results alone do not establish real-world GPS, sensor, or battery performance. Android is not yet supported for release.
+CycleComp is under active development. The iOS app remains the release reference; Android parity work is in progress on a separate branch and is not ready for release. Some guidance, sensor, background-tracking, and terrain behavior still needs broader physical-device validation; simulator results alone do not establish real-world GPS, sensor, or battery performance. See [Android parity status](docs/ANDROID_PARITY.md) for implemented areas and gaps.
 
 ## Run on iOS
 

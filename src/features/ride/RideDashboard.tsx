@@ -4,7 +4,6 @@ import {
   PanResponder,
   Pressable,
   StyleSheet,
-  Switch,
   Text,
   View,
 } from 'react-native';
@@ -15,6 +14,7 @@ import { calculateAverageSpeedKmh } from '../../domain/ride/rideMetrics';
 import type { RideSnapshot } from './useRideTracking';
 import { AmoledTheme } from '../../theme/colors';
 import { SFIcon } from '../../components/SFIcon';
+import { AmoledSwitch } from '../../components/AmoledSwitch';
 import {
   type ClimbAlertState,
   formatGradePercent,
@@ -474,7 +474,7 @@ export function RideDashboard({
         {onToggleAutoPause ? (
           <View style={styles.autoPauseRow}>
             <Text style={styles.autoPauseLabel}>Auto-pause</Text>
-            <Switch
+            <AmoledSwitch
               accessibilityLabel="Auto-pause perjalanan"
               disabled={busy}
               value={ride.autoPauseEnabled ?? false}

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { AppState, NativeEventEmitter, NativeModules } from 'react-native';
+import { AppState, NativeEventEmitter, NativeModules, PermissionsAndroid, Platform } from 'react-native';
+import type { Permission } from 'react-native';
 
 export type RideSnapshot = {
   status: 'idle' | 'active' | 'paused' | 'recoveryNeeded' | 'finished';
@@ -242,6 +243,27 @@ export function useRideTracking() {
     }
   }
 
+  async function startRide() {
+    if (!rideTracking) return null;
+    if (Platform.OS === 'android') {
+      const permissionsToRequest: Permission[] = [
+        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+        PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION,
+      ];
+      if (Number(Platform.Version) >= 33) {
+        permissionsToRequest.push(PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS);
+      }
+      const permissionResults = await PermissionsAndroid.requestMultiple(permissionsToRequest);
+      const locationIsAllowed =
+        permissionResults[PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION] === PermissionsAndroid.RESULTS.GRANTED;
+      if (!locationIsAllowed) {
+        setRideError('Pilih akses lokasi presisi agar rekaman rute CycleComp akurat.');
+        return null;
+      }
+    }
+    return runRideAction(() => rideTracking.startRide());
+  }
+
   useEffect(() => {
     const isNavigating = rideSnapshot.status === 'active' || rideSnapshot.status === 'paused';
     if (!rideTracking?.setKeepScreenOn) return;
@@ -273,7 +295,7 @@ export function useRideTracking() {
     setAutoPauseEnabled: (enabled: boolean) => rideTracking && runRideAction(() => rideTracking.setAutoPauseEnabled(enabled)),
     setSensorDiagnosticsEnabled: (enabled: boolean) => rideTracking && runRideAction(() => rideTracking.setSensorDiagnosticsEnabled(enabled)),
     setWatchHeartRateEnabled: (enabled: boolean) => rideTracking && runRideAction(() => rideTracking.setWatchHeartRateEnabled(enabled)),
-    startRide: () => rideTracking && runRideAction(() => rideTracking.startRide()),
+    startRide,
     pauseRide: () => rideTracking && runRideAction(() => rideTracking.pauseRide()),
     resumeRide: () => rideTracking && runRideAction(() => rideTracking.resumeRide()),
     finishRide: () => rideTracking && runRideAction(() => rideTracking.finishRide()),

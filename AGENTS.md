@@ -19,7 +19,7 @@ Read the planning documents in `../outputs/` before changing product behavior:
 - Native `RideTracking` owns platform location and sensor sessions. React component lifecycle must not start or stop an active ride implicitly.
 - Keep high-frequency samples in native storage and publish throttled typed snapshots to JavaScript.
 - MapLibre renders prepared state. It does not own navigation decisions.
-- Android is planned after the iOS MVP. Do not claim Android support until its device tests pass.
+- Android parity work is explicitly in progress on feature branches. Keep shared domain logic platform-neutral, record Android-specific gaps, and do not claim support until its device test matrix passes.
 
 ## Naming and code shape
 

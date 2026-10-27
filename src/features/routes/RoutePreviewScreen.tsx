@@ -15,10 +15,10 @@ import {
   Alert,
   Image,
   Linking,
+  Platform,
   Pressable,
   ScrollView,
   StatusBar,
-  Switch,
   StyleSheet,
   Text,
   useWindowDimensions,
@@ -84,6 +84,7 @@ import {
 } from '../audio/audioCueService';
 import { EnduranceScreenOverlay } from '../ride/EnduranceScreenOverlay';
 import { SFIcon } from '../../components/SFIcon';
+import { AmoledSwitch } from '../../components/AmoledSwitch';
 
 const INITIAL_MAP_CENTER: [number, number] = [115.1889, -8.4095];
 
@@ -1100,18 +1101,20 @@ export function RoutePreviewScreen() {
           <View style={styles.watchHeartRateDescription}>
             <Text style={styles.watchHeartRateTitle}>HR · realme Watch 5</Text>
             <Text style={styles.watchHeartRateHint}>
-              {rideSnapshot.watchHeartRateMessage ?? (
+              {Platform.OS === 'android'
+                ? 'Sensor detak jantung jam belum tersedia di Android.'
+                : rideSnapshot.watchHeartRateMessage ?? (
                 rideSnapshot.watchHeartRateEnabled
                   ? rideSnapshot.watchHeartRateStatus === 'ready'
                     ? 'Jam siap. Mulai Outdoor Cycle di jam dulu, lalu tap Mulai di CycleComp.'
                     : 'Menyiapkan koneksi jam…'
                   : 'Mulai Outdoor Cycle di jam tangan terlebih dahulu, lalu CycleComp akan membaca HR.'
-              )}
+                )}
             </Text>
           </View>
-          <Switch
+          <AmoledSwitch
             accessibilityLabel="Gunakan HR realme Watch 5 selama ride"
-            disabled={rideBusy || rideChecking || rideSnapshot.watchHeartRateStatus === 'stopping'}
+            disabled={Platform.OS === 'android' || rideBusy || rideChecking || rideSnapshot.watchHeartRateStatus === 'stopping'}
             value={rideSnapshot.watchHeartRateEnabled ?? false}
             onValueChange={enabled => { setWatchHeartRateEnabled(enabled); }}
           />
@@ -1123,7 +1126,7 @@ export function RoutePreviewScreen() {
               Menjeda setelah berhenti terkonfirmasi dari lokasi dan, bila tersedia, aktivitas gerak. Lanjut setelah perpindahan terkonfirmasi.
             </Text>
           </View>
-          <Switch
+          <AmoledSwitch
             accessibilityLabel="Auto-pause perjalanan"
             disabled={rideBusy || rideChecking}
             value={rideSnapshot.autoPauseEnabled ?? false}
@@ -1134,12 +1137,14 @@ export function RoutePreviewScreen() {
           <View style={styles.watchHeartRateDescription}>
             <Text style={styles.watchHeartRateTitle}>Diagnostik sensor</Text>
             <Text style={styles.watchHeartRateHint}>
-              Rekam lokasi tepat, kualitas GPS, dan ringkasan gerak untuk memeriksa speed dan auto-pause. File lokal maksimal 10 MB; bagikan hanya saat diperlukan.
+              {Platform.OS === 'android'
+                ? 'Diagnostik gerak belum tersedia di Android.'
+                : 'Rekam lokasi tepat, kualitas GPS, dan ringkasan gerak untuk memeriksa speed dan auto-pause. File lokal maksimal 10 MB; bagikan hanya saat diperlukan.'}
             </Text>
           </View>
-          <Switch
+          <AmoledSwitch
             accessibilityLabel="Rekam diagnostik sensor selama ride"
-            disabled={rideBusy || rideChecking || rideIsOpen}
+            disabled={Platform.OS === 'android' || rideBusy || rideChecking || rideIsOpen}
             value={rideSnapshot.sensorDiagnosticsEnabled ?? false}
             onValueChange={enabled => { setSensorDiagnosticsEnabled(enabled); }}
           />
@@ -1149,7 +1154,7 @@ export function RoutePreviewScreen() {
             <Text style={styles.watchHeartRateTitle}>Suara navigasi</Text>
             <Text style={styles.watchHeartRateHint}>Petunjuk belokan dan peringatan saat berkendara.</Text>
           </View>
-          <Switch accessibilityLabel="Suara navigasi" value={soundEnabled} onValueChange={handleToggleSound} />
+          <AmoledSwitch accessibilityLabel="Suara navigasi" value={soundEnabled} onValueChange={handleToggleSound} />
         </View>
         <Pressable
           accessibilityLabel="Kelola peta offline"
@@ -1755,7 +1760,7 @@ export function RoutePreviewScreen() {
             </Text>
             <Text style={styles.stateDescription}>
               {lastFinishedRide.fileUrl
-                ? `${formatDistance(lastFinishedRide.distanceMeters ?? 0)} direkam dari ${lastFinishedRide.pointCount ?? 0} titik. File tersedia di Files → Di iPhone Saya → CycleComp → Rides.`
+                ? `${formatDistance(lastFinishedRide.distanceMeters ?? 0)} direkam dari ${lastFinishedRide.pointCount ?? 0} titik. ${Platform.OS === 'ios' ? 'File tersedia di Files → Di iPhone Saya → CycleComp → Rides.' : 'GPX tersimpan di penyimpanan CycleComp. Gunakan Bagikan GPX untuk mengekspor salinan.'}`
                 : 'Perjalanan selesai tanpa posisi yang layak direkam, jadi GPX kosong tidak dibuat.'}
             </Text>
             <View style={styles.modalActionsContainer}>
@@ -1763,11 +1768,15 @@ export function RoutePreviewScreen() {
                 <>
                   <ImportButton
                     label="Bagikan GPX"
-                    hint="Pilih Simpan ke File untuk mengunggah rekaman ini ke Strava"
+                    hint={Platform.OS === 'ios'
+                      ? 'Pilih Simpan ke File untuk mengunggah rekaman ini ke Strava'
+                      : 'Bagikan GPX untuk mengekspor salinan yang bisa dipilih saat mengunggah ke Strava'}
                     onPress={shareFinishedRide}
                   />
                   <Text style={styles.stateDescription}>
-                    Untuk Strava, pilih file GPX di CycleComp → Rides pada halaman unggah. Jika folder belum terlihat, simpan dulu lewat Bagikan GPX → Simpan ke File. Setelah masuk Strava, pilih jenis aktivitas Ride lalu simpan.
+                    {Platform.OS === 'ios'
+                      ? 'Untuk Strava, pilih file GPX di CycleComp → Rides pada halaman unggah. Jika folder belum terlihat, simpan dulu lewat Bagikan GPX → Simpan ke File. Setelah masuk Strava, pilih jenis aktivitas Ride lalu simpan.'
+                      : 'Untuk Strava, bagikan GPX untuk mengekspor salinan, lalu pilih file itu di halaman unggah. Setelah masuk Strava, pilih jenis aktivitas Ride lalu simpan.'}
                   </Text>
                   <ImportButton
                     label="Buka unggah Strava"
@@ -2512,7 +2521,7 @@ function MainTabBar({
   onSelect: (tab: MainTab) => void;
 }) {
   return (
-    <View accessibilityRole="tabbar" style={styles.mainTabBar}>
+    <View accessibilityRole="tablist" style={styles.mainTabBar}>
       {MAIN_TABS.map(tab => {
         const selected = activeTab === tab.id;
         return (
@@ -2571,6 +2580,10 @@ function ImportButton({
 }
 
 function formatDistance(distanceMeters: number) {
+  if (distanceMeters < 1_000) {
+    return `${Math.round(distanceMeters).toLocaleString('id-ID')} m`;
+  }
+
   return `${(distanceMeters / 1000).toLocaleString('id-ID', {
     maximumFractionDigits: 1,
     minimumFractionDigits: 1,

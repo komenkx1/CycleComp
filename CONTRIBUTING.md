@@ -4,7 +4,7 @@ Thanks for helping improve CycleComp. Changes are reviewed through GitHub pull r
 
 ## Report a bug or propose a feature
 
-Use the bug report or feature request form in GitHub Issues. Include the app version, iOS version, steps to reproduce, and what you expected to happen. Do not attach ride GPX files, logs, screenshots, or other files that contain private location or device information unless the maintainers specifically request them.
+Use the bug report or feature request form in GitHub Issues. Include the app version, platform and OS version, steps to reproduce, and what you expected to happen. Do not attach ride GPX files, logs, screenshots, or other files that contain private location or device information unless the maintainers specifically request them.
 
 ## Make a change
 
@@ -17,7 +17,7 @@ The `main` branch is protected. Changes must go through a pull request; maintain
 
 ## Scope and platform evidence
 
-CycleComp is currently iOS-first. Clearly distinguish code changes, simulator checks, and physical-device checks. A simulator does not establish real GPS, sensor, background, or battery behavior. Android support is not considered complete until device validation is documented.
+CycleComp remains iOS-first while Android parity is in progress. Clearly distinguish code changes, simulator checks, and physical-device checks. A simulator does not establish real GPS, sensor, background, or battery behavior. Android support is not considered complete until its feature gaps are closed and device validation is documented.
 
 ## Third-party content
 
