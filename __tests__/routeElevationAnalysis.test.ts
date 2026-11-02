@@ -8,9 +8,24 @@ import {
   getGradeColor,
   getGradeLabel,
   getShortGradeLabel,
+  remainingRouteDistanceMeters,
 } from '../src/domain/routes/elevation/routeElevationAnalysis';
 
 describe('routeElevationAnalysis', () => {
+  test('measures remaining distance along the active route and its reverse', () => {
+    const points = [0, 0.01].map(longitude => ({ coordinate: [longitude, 0] as [number, number], elevationMeters: null }));
+    const route: GpxRoute = {
+      name: 'Route', sourceFileName: 'route.gpx', segments: [{ points }],
+      bounds: [0, 0, 0.01, 0], distanceMeters: 1113, pointCount: 2,
+      elevationPointCount: 0, minimumElevationMeters: null, maximumElevationMeters: null,
+    };
+    const forward = analyzeRouteElevation(route);
+    const reverse = analyzeRouteElevation({ ...route, segments: [{ points: [...points].reverse() }] });
+    expect(remainingRouteDistanceMeters([0.0025, 0], forward)).toBeCloseTo(forward.totalDistanceMeters * 0.75, 0);
+    expect(remainingRouteDistanceMeters([0.0025, 0], reverse)).toBeCloseTo(reverse.totalDistanceMeters * 0.25, 0);
+    expect(remainingRouteDistanceMeters([0.0025, 0.01], forward)).toBeNull();
+    expect(remainingRouteDistanceMeters(null, forward)).toBeNull();
+  });
   test('measures route distance on the WGS84 ellipsoid', () => {
     expect(distanceBetweenCoords([0, 0], [1, 0])).toBeCloseTo(111319.490793, 6);
     expect(distanceBetweenCoords([1, 0], [0, 0])).toBeCloseTo(111319.490793, 6);

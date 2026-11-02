@@ -76,6 +76,8 @@ describe('GmapsLinkModal', () => {
       'https://maps.app.goo.gl/abc123xyz',
       expect.any(Function),
       undefined,
+      {},
+      false,
     );
     expect(mockOnRouteCreated).toHaveBeenCalledWith(mockRoute);
     expect(mockOnClose).toHaveBeenCalled();

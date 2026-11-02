@@ -219,6 +219,12 @@ struct RideAscentDelta {
   let descentMeters: Double
 }
 
+func rideAscentSource(elevationSource: String?, relativeElevationMeters: Double?, barometerEpoch: Int?) -> String? {
+  if relativeElevationMeters != nil { return "barometer-relative:\(barometerEpoch ?? 0)" }
+  if elevationSource == "barometer_gps" { return "barometer-absolute" }
+  return elevationSource.map { "absolute:\($0)" }
+}
+
 struct RideAscentAccumulator {
   private struct Reference {
     let elevationMeters: Double
@@ -326,6 +332,10 @@ struct RideAltitudeFusion {
   private var lastAnchorGpsTimestamp: Date?
   private var lastAnchorCorrectionAt: Date?
 
+  func barometerSampleAge(at timestamp: Date) -> TimeInterval? {
+    latestBarometerSample.map { timestamp.timeIntervalSince($0.timestamp) }
+  }
+
   mutating func startNewEpoch(retaining elevationMeters: Double?, isCalibrated: Bool) {
     epoch += 1
     relativeAltitudeAtEpochStart = nil
@@ -357,7 +367,8 @@ struct RideAltitudeFusion {
     let gpsAccuracyIsValid = gpsVerticalAccuracyMeters.map { $0.isFinite && $0 > 0 && $0 <= 60 } ?? false
     let strongGpsAnchorIsValid = gpsElevationIsValid && gpsVerticalAccuracyMeters.map { $0 > 0 && $0 <= 15 } == true
     let barometerIsPaired = latestBarometerSample.map {
-      abs(gpsTimestamp.timeIntervalSince($0.timestamp)) <= 2
+      let sampleAge = gpsTimestamp.timeIntervalSince($0.timestamp)
+      return sampleAge >= -2 && sampleAge <= 5
     } ?? false
     var relativeElevationMeters: Double?
     if barometerIsPaired,

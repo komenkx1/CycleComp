@@ -35,6 +35,11 @@ describe('gmapsLinkToGpxRoute', () => {
       expect.stringContaining('/115.22755,-8.6918936;115.216004,-8.684765?'),
       expect.any(Object),
     );
+    await gmapsLinkToGpxRoute('https://maps.app.goo.gl/pmLBwU3K36WZvvPKA?g_st=ic', undefined, [115.2, -8.65], {}, true);
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/115.2,-8.65;115.216004,-8.684765?'),
+      expect.any(Object),
+    );
   });
 
   it('converts a Google Maps direction URL into a complete GpxRoute', async () => {

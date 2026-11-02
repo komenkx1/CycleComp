@@ -14,6 +14,7 @@ struct RideTraceLocation: Codable {
   let motionActivityConfidence: String?
   let motionActivityObservedAt: Date?
   let barometerStatus: String
+  let barometerSampleAgeSeconds: Double?
   let accelerationRmsG: Double?
   let rotationRmsRadiansPerSecond: Double?
 }

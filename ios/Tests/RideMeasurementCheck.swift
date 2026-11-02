@@ -9,6 +9,7 @@ import Foundation
     checkLowSpeedStopWithoutStationaryMotion(from: rideStart)
     checkPositionSpeedFallback(from: rideStart)
     checkSignedBarometerFusion(from: rideStart)
+    checkDelayedBarometerFusion(from: rideStart)
     checkSimulatedBarometer(from: rideStart)
     checkRelativeBarometerAscent()
     checkSignedLiveGrade(from: rideStart)
@@ -304,6 +305,46 @@ import Foundation
     precondition(invalidGpsReading.elevationSource == "barometer_gps")
   }
 
+  private static func checkDelayedBarometerFusion(from rideStart: Date) {
+    var fusion = RideAltitudeFusion()
+    fusion.startNewEpoch(retaining: nil, isCalibrated: false)
+    var calibratedReading: RideAltitudeReading?
+    for sampleIndex in 0...5 {
+      let sampleTime = rideStart.addingTimeInterval(Double(sampleIndex) * 2)
+      fusion.recordBarometerSample(RideBarometerSample(
+        relativeAltitudeMeters: Double(sampleIndex),
+        pressureKilopascals: 100.2,
+        timestamp: sampleTime
+      ))
+      calibratedReading = fusion.reading(
+        gpsElevationMeters: 10 + Double(sampleIndex),
+        gpsVerticalAccuracyMeters: 5,
+        gpsTimestamp: sampleTime.addingTimeInterval(3.42)
+      )
+    }
+    precondition(calibratedReading?.elevationSource == "barometer_gps")
+    precondition(calibratedReading?.relativeElevationMeters == 5)
+    precondition(calibratedReading?.pressureKilopascals == 100.2)
+
+    let lastSampleTime = rideStart.addingTimeInterval(10)
+    let staleReading = fusion.reading(
+      gpsElevationMeters: 15,
+      gpsVerticalAccuracyMeters: 5,
+      gpsTimestamp: lastSampleTime.addingTimeInterval(5.01)
+    )
+    precondition(staleReading.elevationSource == "gps")
+    precondition(staleReading.relativeElevationMeters == nil)
+    precondition(staleReading.pressureKilopascals == nil)
+
+    let futureReading = fusion.reading(
+      gpsElevationMeters: 15,
+      gpsVerticalAccuracyMeters: 5,
+      gpsTimestamp: lastSampleTime.addingTimeInterval(-2.01)
+    )
+    precondition(futureReading.elevationSource == "gps")
+    precondition(futureReading.relativeElevationMeters == nil)
+  }
+
   private static func checkSimulatedBarometer(from rideStart: Date) {
     var simulatedBarometer = RideSimulatedBarometer()
     let baseSample = simulatedBarometer.sample(altitudeMeters: 450, at: rideStart)
@@ -372,6 +413,9 @@ import Foundation
   }
 
   private static func checkRelativeBarometerAscent() {
+    precondition(rideAscentSource(elevationSource: "gps", relativeElevationMeters: nil, barometerEpoch: 1) == "absolute:gps")
+    precondition(rideAscentSource(elevationSource: "gps", relativeElevationMeters: 3, barometerEpoch: 1) == "barometer-relative:1")
+    precondition(rideAscentSource(elevationSource: nil, relativeElevationMeters: nil, barometerEpoch: 1) == nil)
     var barometerAccumulator = RideAscentAccumulator()
     _ = barometerAccumulator.update(
       distanceMeters: 0,
@@ -415,6 +459,12 @@ import Foundation
     )
     precondition(sourceSwitchAccumulator.ascentMeters == 3)
     precondition(sourceSwitchAccumulator.descentMeters == 0)
+
+    var gpsFallbackAccumulator = RideAscentAccumulator()
+    let gpsFallback = rideAscentSource(elevationSource: "gps", relativeElevationMeters: nil, barometerEpoch: 1)
+    _ = gpsFallbackAccumulator.update(distanceMeters: 0, elevationMeters: 10, source: gpsFallback, verticalAccuracyMeters: 5)
+    _ = gpsFallbackAccumulator.update(distanceMeters: 50, elevationMeters: 16, source: gpsFallback, verticalAccuracyMeters: 5)
+    precondition(gpsFallbackAccumulator.ascentMeters == 6)
   }
 
   private static func checkSlowRollAndUnanchoredAltitude(from rideStart: Date) {

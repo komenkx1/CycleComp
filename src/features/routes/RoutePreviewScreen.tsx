@@ -36,6 +36,7 @@ import {
   reverseRouteForReturn,
 } from '../../domain/routes/gpx/routeBack';
 import { prepareRecordedRouteBack } from './prepareRecordedRouteBack';
+import { loadActiveRideRoute, saveActiveRideRoute } from './activeRideRoute';
 import {
   boundsContain,
   INDONESIA_MAP_BOUNDS,
@@ -62,12 +63,14 @@ import { AmoledTheme } from '../../theme/colors';
 import {
   analyzeRouteElevation,
   distanceBetweenCoords,
+  distanceFromRouteMeters,
   findClimbStateForRider,
   type ClimbAlertState,
 } from '../../domain/routes/elevation/routeElevationAnalysis';
 import { useAppActive } from '../ride/useAppActive';
 import { NavigationGuidanceBanner } from '../navigation/NavigationGuidanceBanner';
 import { getNavigationGuidance } from '../../domain/routes/navigation/routeNavigationGuidance';
+import { remainingRouteDistanceMeters } from '../../domain/routes/elevation/routeElevationAnalysis';
 import { GmapsLinkModal } from '../search/GmapsLinkModal';
 import { ElevationProfileChart } from '../elevation/ElevationProfileChart';
 import { ClimbListSection } from '../elevation/ClimbListSection';
@@ -119,6 +122,8 @@ export function RoutePreviewScreen() {
   const [routeBackBusy, setRouteBackBusy] = useState(false);
   const [routeBackSourceRoute, setRouteBackSourceRoute] = useState<GpxRoute | null>(null);
   const [gmapsModalVisible, setGmapsModalVisible] = useState(false);
+  const [mapsImportDuringRide, setMapsImportDuringRide] = useState(false);
+  const [pendingRideRoute, setPendingRideRoute] = useState<GpxRoute | null>(null);
   const [navigationZoom, setNavigationZoom] = useState(INITIAL_NAVIGATION_ZOOM);
   const [povMode, setPovMode] = useState<'3d' | '2d'>('3d');
   const [currentPosition, setCurrentPosition] = useState<{
@@ -173,7 +178,9 @@ export function RoutePreviewScreen() {
 
   const importedRoute =
     routeLoadState.status === 'loaded' ? routeLoadState.route : null;
-  const activePreviewRoute = rideHistory.selectedRide?.route ?? importedRoute ?? null;
+  const activePreviewRoute = (rideSnapshot.status === 'active' || rideSnapshot.status === 'paused' || rideSnapshot.status === 'recoveryNeeded')
+    ? importedRoute
+    : rideHistory.selectedRide?.route ?? importedRoute ?? null;
   const {
     savedMapAreas,
     mapPackCheck,
@@ -245,6 +252,20 @@ export function RoutePreviewScreen() {
   const rideIsOpen = rideSnapshot.status === 'active' ||
     rideSnapshot.status === 'paused' ||
     rideSnapshot.status === 'recoveryNeeded';
+  const currentRideRef = useRef(rideSnapshot);
+  const routeSelectionRevision = useRef(0);
+  currentRideRef.current = rideSnapshot;
+  useEffect(() => {
+    if (!rideIsOpen || !rideSnapshot.rideId) return;
+    let cancelled = false;
+    const selectionRevision = routeSelectionRevision.current;
+    loadActiveRideRoute(rideSnapshot.rideId).then(route => {
+      if (!cancelled && route && selectionRevision === routeSelectionRevision.current) setRouteLoadState({ status: 'loaded', route });
+    }).catch(() => {
+      if (!cancelled) Alert.alert('Rute belum dapat dipulihkan', 'Rekaman perjalanan tetap tersedia. Impor kembali rute untuk melanjutkan navigasi.');
+    });
+    return () => { cancelled = true; };
+  }, [rideIsOpen, rideSnapshot.rideId]);
   const currentBottomPadding = useMemo(() => {
     if (rideIsOpen) {
       return Math.max(dashboardHeight + 16, 120);
@@ -408,20 +429,27 @@ export function RoutePreviewScreen() {
         totalClimbs: 0,
       };
     }
-    return findClimbStateForRider(activeRiderCoordinate, routeElevationAnalysis);
-  }, [routeElevationAnalysis, activeRiderCoordinate]);
+    return findClimbStateForRider(rideIsOpen && !rideHasFreshFix ? null : activeRiderCoordinate, routeElevationAnalysis);
+  }, [routeElevationAnalysis, activeRiderCoordinate, rideIsOpen, rideHasFreshFix]);
 
   const routeCoordinates = useMemo(() => {
     if (!activePreviewRoute) return [];
     return activePreviewRoute.segments.flatMap(segment => segment.points.map(p => p.coordinate));
   }, [activePreviewRoute]);
 
+  const distanceToFinishMeters = useMemo(() => {
+    if (!importedRoute || !routeElevationAnalysis || !rideHasFreshFix) return null;
+    return remainingRouteDistanceMeters(activeRiderCoordinate, routeElevationAnalysis);
+  }, [importedRoute, routeElevationAnalysis, rideHasFreshFix, activeRiderCoordinate]);
+
   const turnGuidance = useMemo(() => {
-    if (!importedRoute || routeCoordinates.length < 2) {
-      return null;
+    if (!importedRoute || routeCoordinates.length < 2) return null;
+    const instruction = getNavigationGuidance(routeCoordinates, activeRiderCoordinate);
+    if (instruction?.type === 'straight' && distanceToFinishMeters != null) {
+      return { ...instruction, distanceMeters: Math.round(distanceToFinishMeters) };
     }
-    return getNavigationGuidance(routeCoordinates, activeRiderCoordinate);
-  }, [importedRoute, routeCoordinates, activeRiderCoordinate]);
+    return instruction;
+  }, [importedRoute, routeCoordinates, activeRiderCoordinate, distanceToFinishMeters]);
 
   const audioCueManagerRef = useRef(new NavigationAudioCueManager());
   const [soundEnabled, setSoundEnabledState] = useState(isSoundEnabled());
@@ -523,10 +551,7 @@ export function RoutePreviewScreen() {
         turnGuidance.type !== 'straight' &&
         turnGuidance.type !== 'finish' &&
         turnGuidance.distanceMeters <= 180;
-      const hasClimbEvent =
-        effectiveClimbType === 'upcoming' || effectiveClimbType === 'active';
-
-      if (hasUpcomingTurn || hasClimbEvent || isOffRoute) {
+      if (hasUpcomingTurn || isOffRoute) {
         if (!endurancePeeking) {
           setEndurancePeeking(true);
         }
@@ -784,6 +809,11 @@ export function RoutePreviewScreen() {
           return;
         }
 
+        if (routeBackRide.rideId) {
+          await saveActiveRideRoute(routeBackRide.rideId, routeToReturn);
+          routeSelectionRevision.current += 1;
+        }
+
         const activeRideCoordinate = routeBackRide.lastCoordinate ?? currentPosition?.coordinate;
         if (activeRideCoordinate) {
           applyCameraStop({
@@ -951,6 +981,67 @@ export function RoutePreviewScreen() {
             : 'GPX tidak dapat dibaca. Pilih file lain.',
       });
     }
+  }
+
+  function confirmRideRoute(route: GpxRoute) {
+    const rideAtSelection = currentRideRef.current;
+    const rideId = rideAtSelection.rideId;
+    if (!rideId || !['active', 'paused'].includes(rideAtSelection.status)) return;
+    const riderCoordinate = rideAtSelection.lastCoordinate;
+    const nearestDistance = riderCoordinate ? distanceFromRouteMeters(riderCoordinate, analyzeRouteElevation(route)) : null;
+    const distanceNotice = nearestDistance != null && nearestDistance > 100
+      ? `\nPosisi sekitar ${Math.round(nearestDistance)} m dari rute. Jalur penghubung tidak dibuat otomatis.`
+      : '';
+    Alert.alert('Gunakan tujuan ini?', `${route.name} · ${(route.distanceMeters / 1000).toFixed(1).replace('.', ',')} km${distanceNotice}\nRekaman perjalanan tetap berlanjut.`, [
+      { text: 'Batal', style: 'cancel' },
+      { text: 'Gunakan rute', onPress: async () => {
+        if (currentRideRef.current.rideId !== rideId || !['active', 'paused'].includes(currentRideRef.current.status)) return;
+        try {
+          await saveActiveRideRoute(rideId, route);
+          if (currentRideRef.current.rideId !== rideId || !['active', 'paused'].includes(currentRideRef.current.status)) return;
+          routeSelectionRevision.current += 1;
+          rideHistory.clearSelectedRide();
+          setRouteLoadState({ status: 'loaded', route });
+          setRouteBackActive(false);
+          setRouteBackSourceRoute(null);
+          setRideFollowing(true);
+          setActiveTab('ride');
+        } catch (error) {
+          Alert.alert('Rute belum dapat digunakan', error instanceof Error ? error.message : 'Rute gagal disimpan.');
+        }
+      } },
+    ]);
+  }
+
+  useEffect(() => {
+    if (!pendingRideRoute || gmapsModalVisible) return;
+    const timer = setTimeout(() => {
+      setPendingRideRoute(null);
+      confirmRideRoute(pendingRideRoute);
+    }, 500);
+    return () => clearTimeout(timer);
+  // The pending route is confirmed after the native modal closes.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingRideRoute, gmapsModalVisible]);
+
+  function chooseRideDestination() {
+    Alert.alert('Tambah tujuan', 'Pilih sumber rute. Rekaman perjalanan tetap berjalan.', [
+      { text: 'Batal', style: 'cancel' },
+      { text: 'File GPX', onPress: async () => {
+        try { confirmRideRoute(await pickAndImportGpxRoute()); }
+        catch (error) {
+          if (!(error instanceof GpxImportCanceledError)) Alert.alert('GPX belum dapat dibuka', error instanceof Error ? error.message : 'Coba pilih file lain.');
+        }
+      } },
+      { text: 'Link Google Maps', onPress: () => {
+        if (!rideHasFreshFix || !rideSnapshot.lastCoordinate) {
+          Alert.alert('Menunggu lokasi GPS', 'Tunggu lokasi terbaru sebelum membuat rute dari posisi saat ini.');
+          return;
+        }
+        setMapsImportDuringRide(true);
+        setGmapsModalVisible(true);
+      } },
+    ]);
   }
 
   function confirmClearGpxRoute() {
@@ -1390,6 +1481,8 @@ export function RoutePreviewScreen() {
               instruction={turnGuidance}
               climbAlert={climbAlert}
               routeName={importedRoute ? importedRoute.name : undefined}
+              hasRoute={importedRoute !== null}
+              distanceToFinishMeters={distanceToFinishMeters}
               isPaused={rideSnapshot.status === 'paused'}
               needsRecovery={rideSnapshot.status === 'recoveryNeeded'}
               accuracyMeters={rideSnapshot.horizontalAccuracyMeters}
@@ -1446,6 +1539,7 @@ export function RoutePreviewScreen() {
           }
           routeBackBusy={routeBackBusy}
           onRouteBack={startRouteBack}
+          onAddDestination={rideSnapshot.status === 'active' || rideSnapshot.status === 'paused' ? chooseRideDestination : undefined}
           onRecenter={() => {
             setRideFollowing(true);
             const target = rideSnapshot.lastCoordinate ?? currentPosition?.coordinate;
@@ -1820,14 +1914,19 @@ export function RoutePreviewScreen() {
 
       <GmapsLinkModal
         visible={gmapsModalVisible}
-        onClose={() => setGmapsModalVisible(false)}
+        onClose={() => { setGmapsModalVisible(false); setMapsImportDuringRide(false); }}
         onRouteCreated={route => {
+          if (mapsImportDuringRide) {
+            setPendingRideRoute(route);
+            return;
+          }
           setRouteLoadState({ status: 'loaded', route });
           setRouteBackActive(false);
           setRouteBackSourceRoute(null);
           setActiveTab('routes');
         }}
-        userCoordinate={currentPosition?.coordinate}
+        userCoordinate={mapsImportDuringRide ? rideSnapshot.lastCoordinate : currentPosition?.coordinate}
+        startFromCurrentPosition={mapsImportDuringRide}
       />
 
       <EnduranceScreenOverlay
@@ -1857,8 +1956,10 @@ export function RoutePreviewScreen() {
           : null}
         routeProfileAvailable={(routeElevationAnalysis?.climbs.length ?? 0) > 0}
         turnInstruction={turnGuidance}
+        hasRoute={importedRoute !== null}
+        distanceToFinishMeters={distanceToFinishMeters}
         climbAlert={climbAlert}
-        terrainClimbStatus={rideSnapshot.terrainClimbStatus}
+        terrainClimbStatus={rideSnapshot.status === 'active' && !rideSnapshot.autoPaused && rideHasFreshFix ? rideSnapshot.terrainClimbStatus : null}
         terrainClimbDistanceToStartMeters={rideSnapshot.terrainClimbDistanceToStartMeters}
         terrainClimbAverageGradePercent={rideSnapshot.terrainClimbAverageGradePercent}
         onWakeUp={handleWakeUpEndurance}

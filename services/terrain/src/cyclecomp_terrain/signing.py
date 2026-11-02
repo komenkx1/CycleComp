@@ -627,13 +627,18 @@ def _validate_road_profile_database(
     profiled_edge_sample_counts: dict[int, int] = {}
     previous_distances: dict[int, float] = {}
     structure_edge_ids: set[int] = set()
-    for row in connection.execute(
+    # Published packs drop per-edge samples after corridor profiles are derived; apps read corridor samples only.
+    has_edge_samples = connection.execute(
+        "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'elevation_samples'"
+    ).fetchone() is not None
+    edge_sample_rows = connection.execute(
         """SELECT edge_id, sample_index, distance_meters, longitude, latitude,
                   terrain_elevation_meters, profile_elevation_meters, grade_percent,
                   source_reason, elevation_source, source_name, source_release,
                   source_resolution_meters, vertical_datum, quality_flags_json
            FROM elevation_samples ORDER BY edge_id, sample_index"""
-    ):
+    ) if has_edge_samples else ()
+    for row in edge_sample_rows:
         (
             edge_id,
             sample_index,
@@ -724,6 +729,11 @@ def _validate_road_profile_database(
         "structureEdgeCount": structure_edge_count,
         "climbCandidateCount": climb_candidate_count,
     }
+    if not has_edge_samples:
+        expected_counts = {"climbCandidateCount": climb_candidate_count}
+        profiled_edge_count = road_profiles.get("profiledEdgeCount")
+        if type(profiled_edge_count) is not int:
+            raise ValueError("terrain pack road profile counts do not match its database")
     if any(
         type(road_profiles.get(key)) is not int or road_profiles.get(key) != expected_value
         for key, expected_value in expected_counts.items()

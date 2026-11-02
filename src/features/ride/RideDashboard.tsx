@@ -38,6 +38,7 @@ type RideDashboardProps = {
   canRouteBack?: boolean;
   routeBackBusy?: boolean;
   onRouteBack?: () => void;
+  onAddDestination?: () => void;
   onRecenter: () => void;
   onZoomIn: () => void;
   onZoomOut: () => void;
@@ -64,6 +65,7 @@ export function RideDashboard({
   canRouteBack = false,
   routeBackBusy = false,
   onRouteBack,
+  onAddDestination,
   onRecenter,
   onZoomIn,
   onZoomOut,
@@ -99,7 +101,7 @@ export function RideDashboard({
   }, [ride.autoPaused, ride.status, ride.speedMetersPerSecond]);
 
   useEffect(() => {
-    const estimatedHeight = minimized ? 96 : (expanded ? 590 : 340) + (showsOfflineTerrainClimb ? 74 : 0);
+    const estimatedHeight = minimized ? 96 + (showsOfflineTerrainClimb ? 24 : 0) : (expanded ? 590 : 340) + (showsOfflineTerrainClimb ? 74 : 0);
     onHeightChange?.(estimatedHeight);
   }, [minimized, expanded, showsOfflineTerrainClimb, onHeightChange]);
 
@@ -156,6 +158,12 @@ export function RideDashboard({
     <View pointerEvents="box-none" style={styles.bottomArea}>
       <View pointerEvents="box-none" style={styles.mapControlsRow}>
         <View style={styles.mapControlsStack}>
+          {onAddDestination ? (
+            <Pressable accessibilityRole="button" accessibilityLabel="Tambah tujuan" onPress={onAddDestination} style={styles.routeBackMapButton}>
+              <SFIcon name="map.fill" color={AmoledTheme.accentOrange} size={17} />
+              <Text style={styles.routeBackMapButtonLabel}>Tujuan</Text>
+            </Pressable>
+          ) : null}
           {canRouteBack && onRouteBack ? (
             <Pressable
               accessibilityHint="Mengikuti kembali jejak GPS yang sudah terekam menuju titik awal."
@@ -250,6 +258,7 @@ export function RideDashboard({
         </View>
 
         {minimized ? (
+          <>
           <View style={styles.minimizedContent}>
             <View style={styles.minimizedMetricsGroup}>
               <View style={styles.minimizedSpeedColumn}>
@@ -320,6 +329,14 @@ export function RideDashboard({
               </Pressable>
             </View>
           </View>
+          {showsOfflineTerrainClimb ? (
+            <Text testID="minimized-terrain-climb-alert" style={styles.terrainClimbTitle}>
+              {ride.terrainClimbStatus === 'active'
+                ? `Tanjakan aktif · sisa ${formatTerrainDistance(ride.terrainClimbDistanceRemainingMeters ?? 0)}`
+                : `Tanjakan ${Math.round(ride.terrainClimbDistanceToStartMeters ?? 0)} m lagi · ${formatGradePercent(ride.terrainClimbAverageGradePercent ?? null)}`}
+            </Text>
+          ) : null}
+          </>
         ) : (
           <>
             <View style={styles.headingRow}>

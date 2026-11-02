@@ -27,6 +27,8 @@ type EnduranceScreenOverlayProps = {
   liveGradeSource?: 'barometer' | 'gps' | null;
   routeProfileAvailable?: boolean;
   turnInstruction?: TurnInstruction | null;
+  hasRoute?: boolean;
+  distanceToFinishMeters?: number | null;
   climbAlert?: ClimbAlertState;
   terrainClimbStatus?: 'unavailable' | 'unknown' | 'none' | 'upcoming' | 'active' | null;
   terrainClimbDistanceToStartMeters?: number | null;
@@ -58,6 +60,8 @@ export function EnduranceScreenOverlay({
   liveGradeSource = null,
   routeProfileAvailable = false,
   turnInstruction,
+  hasRoute = false,
+  distanceToFinishMeters = null,
   climbAlert,
   terrainClimbStatus = null,
   terrainClimbDistanceToStartMeters = null,
@@ -149,6 +153,11 @@ export function EnduranceScreenOverlay({
             : `Gradien aktual ${formatGradePercent(liveGradePercent)} · ${liveGradeSource === 'gps' ? 'GPS' : 'barometer'}`}
         </Text>
       </View>
+      {hasRoute ? (
+        <Text testID="endurance-distance-to-finish" style={[styles.liveGradeText, { color: AmoledTheme.textPrimary }]}>
+          {`Sisa ke finish: ${distanceToFinishMeters == null ? '—' : `${(distanceToFinishMeters / 1000).toFixed(1).replace('.', ',')} km`}`}
+        </Text>
+      ) : null}
 
       {/* Turn or Climb Next Action HUD */}
       {turnInstruction && turnInstruction.type !== 'straight' ? (
@@ -161,6 +170,12 @@ export function EnduranceScreenOverlay({
             <Text style={styles.turnDistance}>
               {formatNavigationDistance(turnInstruction.distanceMeters)}
             </Text>
+            {hasClimb ? (
+              <>
+                <Text numberOfLines={1} style={styles.turnTitle}>{climbTitle}</Text>
+                <Text style={[styles.turnDistance, { color: getGradeColor(climbGrade) }]}>{formatGradePercent(climbGrade)}</Text>
+              </>
+            ) : null}
           </View>
         </View>
       ) : hasClimb ? (

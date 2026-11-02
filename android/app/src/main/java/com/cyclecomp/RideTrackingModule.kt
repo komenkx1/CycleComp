@@ -186,6 +186,20 @@ class RideTrackingModule(private val reactContext: ReactApplicationContext) : Re
   }
 
   @ReactMethod
+  fun getActiveRideRoute(promise: Promise) = resolve(promise) {
+    reactContext.getFileStreamPath("active-ride-route.json").takeIf { it.exists() }?.readText()
+  }
+
+  @ReactMethod
+  fun setActiveRideRoute(routeJSON: String, promise: Promise) = resolve(promise) {
+    val routeFile = reactContext.getFileStreamPath("active-ride-route.json")
+    val pendingFile = reactContext.getFileStreamPath("active-ride-route.pending")
+    pendingFile.writeText(routeJSON)
+    check(pendingFile.renameTo(routeFile)) { "Rute tidak dapat disimpan untuk pemulihan." }
+    true
+  }
+
+  @ReactMethod
   fun setStravaStorage(storage: ReadableMap, promise: Promise) = resolve(promise) {
     reactContext.getSharedPreferences("cyclecomp_strava", Context.MODE_PRIVATE)
       .edit().putString("storage", JSONObject(storage.toHashMap()).toString()).apply()

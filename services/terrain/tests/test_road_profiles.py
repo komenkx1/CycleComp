@@ -11,6 +11,7 @@ import osmium
 import rasterio
 from affine import Affine
 
+from cyclecomp_terrain import grid_pack
 from cyclecomp_terrain.grid_pack import build_elevation_grid_pack
 from cyclecomp_terrain.raster_elevation import RasterElevationStore
 from cyclecomp_terrain.road_profiles import RoadProfileKernel, _sample_road_geometry
@@ -97,9 +98,10 @@ def test_short_predictable_road_keeps_two_edge_and_corridor_samples(tmp_path: Pa
     finally:
         terrain_store.close()
     with sqlite3.connect(pack.pack_directory / "terrain.sqlite") as database:
+        # Published packs keep corridor samples only; per-edge samples are build input.
         assert database.execute(
-            "SELECT COUNT(*) FROM elevation_samples GROUP BY edge_id"
-        ).fetchall() == [(2,), (2,)]
+            "SELECT 1 FROM sqlite_schema WHERE name = 'elevation_samples'"
+        ).fetchone() is None
         assert database.execute(
             "SELECT COUNT(*) FROM road_corridor_elevation_samples GROUP BY corridor_id"
         ).fetchall() == [(2,), (2,)]
@@ -110,8 +112,10 @@ def test_short_predictable_road_keeps_two_edge_and_corridor_samples(tmp_path: Pa
 
 
 def test_road_profile_builder_keeps_signed_elevation_and_breaks_unknown_gaps(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch,
 ) -> None:
+    # Inspect the per-edge build samples that published packs normally drop.
+    monkeypatch.setattr(grid_pack, "_drop_edge_elevation_samples", lambda database_path: None)
     terrain_store = _create_profile_terrain_store(tmp_path / "source")
     pbf_path = _write_profile_fixture(tmp_path / "roads.osm.pbf")
     try:

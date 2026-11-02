@@ -139,7 +139,8 @@ export function getNavigationGuidance(
   }
 
   // Jika hampir sampai di titik finish (< 35m)
-  if (closestIndex >= routePoints.length - 2 || distanceToEnd < 35) {
+  const distanceToDestination = distanceBetweenCoords(riderPosition, destination);
+  if (distanceToEnd < 35 && distanceToDestination < 35) {
     return {
       type: 'finish',
       title: 'Tiba di tujuan',
@@ -223,7 +224,7 @@ export function getNavigationGuidance(
     type: 'straight',
     title: 'Lurus terus',
     description: 'Ikuti jalur rute saat ini',
-    distanceMeters: Math.round(distanceToEnd),
+    distanceMeters: Math.round(Math.max(distanceToEnd, distanceToDestination)),
     coordinate: destination,
   };
 }

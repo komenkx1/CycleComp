@@ -27,6 +27,15 @@ describe('NavigationGuidanceBanner', () => {
     totalClimbs: 0,
   };
 
+  test('shows remaining distance separately from the next turn', () => {
+    let screen: ReactTestRenderer.ReactTestRenderer;
+    ReactTestRenderer.act(() => { screen = ReactTestRenderer.create(
+      <NavigationGuidanceBanner instruction={turnInstruction} climbAlert={noClimb} hasRoute distanceToFinishMeters={2350} />,
+    ); });
+    expect(screen!.root.findByProps({ testID: 'navigation-distance-to-finish' }).props.children).toBe('Sisa ke finish: 2,4 km');
+    ReactTestRenderer.act(() => screen!.unmount());
+  });
+
   const upcomingClimb: ClimbAlertState = {
     type: 'upcoming',
     climbIndex: 1,

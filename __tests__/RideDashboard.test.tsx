@@ -58,7 +58,7 @@ test('shows recorded ride metrics and working ride controls', async () => {
     renderer!.root.findByProps({ accessibilityLabel: 'Pusatkan' }).props.onPress();
     renderer!.root.findByProps({ accessibilityLabel: 'Jeda' }).props.onPress();
     renderer!.root.findByProps({ accessibilityLabel: 'Selesai' }).props.onPress();
-    renderer!.root.findByProps({ accessibilityLabel: 'Perluas panel perjalanan' }).props.onPress();
+    renderer!.root.findAllByProps({ accessibilityLabel: 'Perluas panel perjalanan' })[0]!.props.onPress();
   });
 
   expect(onRecenter).toHaveBeenCalledTimes(1);
@@ -340,6 +340,14 @@ test('shows offline free-ride climb guidance and suppresses it while paused or r
   expect(renderer!.root.findByProps({ children: 'Tanjakan di depan' })).toBeTruthy();
   expect(renderer!.root.findByProps({ children: '450 m lagi' })).toBeTruthy();
   expect(renderer!.root.findByProps({ children: 'Profil medan offline lengkap' })).toBeTruthy();
+
+  await ReactTestRenderer.act(() => {
+    renderer!.root.findByProps({ accessibilityLabel: 'Perkecil panel perjalanan' }).props.onPress();
+  });
+  expect(renderer!.root.findByProps({ testID: 'minimized-terrain-climb-alert' }).props.children).toBe('Tanjakan 450 m lagi · +6.4%');
+  await ReactTestRenderer.act(() => {
+    renderer!.root.findAllByProps({ accessibilityLabel: 'Perluas panel perjalanan' })[0]!.props.onPress();
+  });
 
   await ReactTestRenderer.act(() => {
     renderer!.update(

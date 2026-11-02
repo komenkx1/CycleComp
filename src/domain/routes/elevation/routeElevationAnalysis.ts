@@ -838,6 +838,23 @@ interface RoutePosition {
   segmentIndex?: number;
 }
 
+export function distanceFromRouteMeters(
+  riderCoordinate: RouteCoordinate,
+  analysis: RouteElevationAnalysis,
+): number | null {
+  return findClosestRoutePosition(riderCoordinate, analysis.samples)?.distanceFromRouteMeters ?? null;
+}
+
+export function remainingRouteDistanceMeters(
+  riderCoordinate: RouteCoordinate | null | undefined,
+  analysis: RouteElevationAnalysis,
+): number | null {
+  if (!riderCoordinate || analysis.samples.length < 2) return null;
+  const position = findClosestRoutePosition(riderCoordinate, analysis.samples);
+  if (!position || position.distanceFromRouteMeters > 100) return null;
+  return Math.max(0, analysis.totalDistanceMeters - position.distanceMeters);
+}
+
 function findClosestRoutePosition(
   riderCoordinate: RouteCoordinate,
   samples: RouteSample[],

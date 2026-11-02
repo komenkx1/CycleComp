@@ -26,6 +26,7 @@ interface GmapsLinkModalProps {
   onClose: () => void;
   onRouteCreated: (route: GpxRoute) => void;
   userCoordinate?: [number, number] | null;
+  startFromCurrentPosition?: boolean;
 }
 
 type PipelineStep = 'idle' | 'resolving' | 'geocoding' | 'routing' | 'elevation' | 'building' | 'done' | 'error';
@@ -46,6 +47,7 @@ export function GmapsLinkModal({
   onClose,
   onRouteCreated,
   userCoordinate,
+  startFromCurrentPosition = false,
 }: GmapsLinkModalProps) {
   const insets = useSafeAreaInsets();
   const [urlInput, setUrlInput] = useState('');
@@ -85,6 +87,8 @@ export function GmapsLinkModal({
           setStatusMessage(progress.message);
         },
         userCoordinate,
+        {},
+        startFromCurrentPosition,
       );
 
       setCurrentStep('done');

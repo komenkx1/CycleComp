@@ -25,6 +25,8 @@ type NavigationGuidanceBannerProps = {
   instruction: TurnInstruction | null;
   climbAlert: ClimbAlertState;
   routeName?: string;
+  hasRoute?: boolean;
+  distanceToFinishMeters?: number | null;
   isPaused?: boolean;
   needsRecovery?: boolean;
   accuracyMeters?: number | null;
@@ -41,6 +43,8 @@ export function NavigationGuidanceBanner({
   instruction,
   climbAlert,
   routeName,
+  hasRoute = false,
+  distanceToFinishMeters = null,
   isPaused = false,
   needsRecovery = false,
   accuracyMeters = null,
@@ -95,6 +99,7 @@ export function NavigationGuidanceBanner({
                   {`Tanjakan ${formatGradePercent(climbGrade)} (${getGradeLabel(climbGrade)})`}
                 </Text>
               ) : null}
+              {hasRoute ? <Text style={styles.collapsedClimbText}>{formatFinishDistance(distanceToFinishMeters)}</Text> : null}
             </View>
             <Text style={styles.expandChevron}>▼</Text>
           </View>
@@ -226,6 +231,7 @@ export function NavigationGuidanceBanner({
             <Text numberOfLines={1} style={styles.descriptionSubText}>
               {instruction.description}
             </Text>
+            {hasRoute ? <Text testID="navigation-distance-to-finish" style={styles.descriptionSubText}>{formatFinishDistance(distanceToFinishMeters)}</Text> : null}
           </View>
         </View>
 
@@ -236,6 +242,10 @@ export function NavigationGuidanceBanner({
       </View>
     </View>
   );
+}
+
+function formatFinishDistance(distanceMeters: number | null): string {
+  return `Sisa ke finish: ${distanceMeters == null ? '—' : `${(distanceMeters / 1000).toFixed(1).replace('.', ',')} km`}`;
 }
 
 /**

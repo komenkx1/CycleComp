@@ -48,10 +48,14 @@ export async function gmapsLinkToGpxRoute(
   onProgress?: (progress: ConversionProgress) => void,
   originCoordinate?: [number, number] | null,
   elevationLookupOptions: ElevationLookupOptions = {},
+  startFromCurrentPosition = false,
 ): Promise<GpxRoute> {
   // --- Step 1: Resolve & parse the URL ---
   onProgress?.({ step: 'resolving', message: 'Membaca link Google Maps…' });
   const parsed = await parseGoogleMapsLink(rawUrl, originCoordinate);
+  if (startFromCurrentPosition && originCoordinate && parsed.waypoints.length > 1) {
+    parsed.waypoints[0] = { type: 'coordinate', longitude: originCoordinate[0], latitude: originCoordinate[1] };
+  }
 
   // --- Step 2: Geocode place-name waypoints ---
   const resolvedCoords: RouteCoordinate[] = [];

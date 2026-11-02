@@ -148,8 +148,10 @@ def test_pbf_build_splits_shared_nodes_and_preserves_safe_direction_metadata(tmp
         pack_metadata = dict(database.execute("SELECT key, value FROM pack_metadata"))
         assert json.loads(pack_metadata["hasRoadGraph"]) is True
         assert json.loads(pack_metadata["hasRoadProfiles"]) is True
-        profile_samples = database.execute("SELECT COUNT(*) FROM elevation_samples").fetchone()[0]
-        assert profile_samples == road_profiles["sampleCount"]
+        assert road_profiles["sampleCount"] > 0
+        assert database.execute(
+            "SELECT 1 FROM sqlite_schema WHERE name = 'elevation_samples'"
+        ).fetchone() is None
 
         database.execute(
             "UPDATE road_edges SET bicycle_access = 'road_class_inferred', predictable = 1 "

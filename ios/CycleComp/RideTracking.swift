@@ -728,6 +728,24 @@ final class RideTracking: RCTEventEmitter, CLLocationManagerDelegate {
     resolve(dict)
   }
 
+  @objc(getActiveRideRoute:rejecter:)
+  func getActiveRideRoute(_ resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
+    let file = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("active-ride-route.json")
+    resolve(try? String(contentsOf: file, encoding: .utf8))
+  }
+
+  @objc(setActiveRideRoute:resolver:rejecter:)
+  func setActiveRideRoute(_ routeJSON: String, resolver resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
+    do {
+      let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+      try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+      try routeJSON.write(to: directory.appendingPathComponent("active-ride-route.json"), atomically: true, encoding: .utf8)
+      resolve(true)
+    } catch {
+      reject("route_save_failed", "Rute tidak dapat disimpan untuk pemulihan.", error)
+    }
+  }
+
   @objc(setStravaStorage:resolver:rejecter:)
   func setStravaStorage(_ data: [String: Any], resolver resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
     UserDefaults.standard.set(data, forKey: "CycleComp_StravaStorage")
@@ -950,6 +968,7 @@ final class RideTracking: RCTEventEmitter, CLLocationManagerDelegate {
             motionActivityConfidence: motionSensor.activityConfidence,
             motionActivityObservedAt: motionSensor.activityObservedAt,
             barometerStatus: barometerStatus,
+            barometerSampleAgeSeconds: altitudeFusion.barometerSampleAge(at: location.timestamp),
             accelerationRmsG: motionSummary?.accelerationRmsG,
             rotationRmsRadiansPerSecond: motionSummary?.rotationRmsRadiansPerSecond
           )
@@ -1502,16 +1521,11 @@ final class RideTracking: RCTEventEmitter, CLLocationManagerDelegate {
   private func updateAscent(with point: RidePoint) {
     guard point.motionState == RideAutoPausePolicy.MotionState.moving.rawValue else { return }
     let ascentElevation = point.relativeElevationMeters ?? point.elevationMeters
-    let ascentSource: String?
-    if point.relativeElevationMeters != nil {
-      ascentSource = "barometer-relative:\(point.barometerEpoch ?? 0)"
-    } else if point.barometerEpoch != nil {
-      return
-    } else if point.elevationSource == "barometer_gps" {
-      ascentSource = "barometer-absolute"
-    } else {
-      ascentSource = point.elevationSource.map { "absolute:\($0)" }
-    }
+    let ascentSource = rideAscentSource(
+      elevationSource: point.elevationSource,
+      relativeElevationMeters: point.relativeElevationMeters,
+      barometerEpoch: point.barometerEpoch
+    )
     _ = ascentAccumulator.update(
       distanceMeters: distanceMeters,
       elevationMeters: ascentElevation,
