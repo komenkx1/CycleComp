@@ -64,6 +64,8 @@ final class RealmeWatchHeartRate: NSObject, CBCentralManagerDelegate, CBPeripher
     guard enabled else { return }
     desiredRideState = "paused"
     pollTimer?.invalidate()
+    scanTimeout?.invalidate()
+    if !notificationsReady { bluetooth?.stopScan() }
     if isExternalSession {
       changeStatus("paused", "HR dijeda (sesi jam tetap berjalan)")
     } else if let sessionTime, status == "active" {
@@ -79,20 +81,24 @@ final class RealmeWatchHeartRate: NSObject, CBCentralManagerDelegate, CBPeripher
   func resumeRide() {
     guard enabled else { return }
     desiredRideState = "active"
-    if status == "pausing" { return }
+    if status == "pausing" || status == "resuming" { return }
+    if !notificationsReady {
+      findWatch()
+      return
+    }
     if isExternalSession {
       changeStatus("active", "HR aktif (sesi jam)")
       beginPolling()
-    } else if let sessionTime, status == "paused" {
+    } else if status == "active" {
+      beginPolling()
+    } else if let sessionTime {
       beatsPerMinute = nil
       lastSampleAt = nil
       changeStatus("resuming")
       send([0x10, 0x05] + sessionTime)
       awaitResponse(for: "resuming")
-    } else if sessionTime == nil {
-      startRide()
     } else {
-      changeStatus("error", "Cek sesi jam; HR belum bisa dilanjutkan otomatis.")
+      startRide()
     }
   }
 
@@ -100,6 +106,8 @@ final class RealmeWatchHeartRate: NSObject, CBCentralManagerDelegate, CBPeripher
     desiredRideState = "idle"
     pollTimer?.invalidate()
     responseTimeout?.invalidate()
+    scanTimeout?.invalidate()
+    bluetooth?.stopScan()
     if isExternalSession {
       sessionTime = nil
       sessionStartedAt = nil
@@ -143,6 +151,11 @@ final class RealmeWatchHeartRate: NSObject, CBCentralManagerDelegate, CBPeripher
       self.bluetooth?.stopScan()
       if let watch = self.watch, watch.state == .connecting { self.bluetooth?.cancelPeripheralConnection(watch) }
       self.changeStatus("disconnected", "Watch 5 belum terhubung. Dekatkan jam dan sambungkan lewat Realme Link.")
+      if self.desiredRideState == "active" {
+        self.scanTimeout = Timer.scheduledTimer(withTimeInterval: 30, repeats: false) { [weak self] _ in
+          self?.findWatch()
+        }
+      }
     }
   }
 
@@ -228,8 +241,12 @@ final class RealmeWatchHeartRate: NSObject, CBCentralManagerDelegate, CBPeripher
     responseTimeout?.invalidate()
     notificationsReady = false
     commandChannel = nil
-    isExternalSession = false
-    if enabled { changeStatus("disconnected", "Watch 5 terputus. Cek sesi jam; rekaman GPS tetap berjalan.") }
+    beatsPerMinute = nil
+    lastSampleAt = nil
+    if enabled {
+      changeStatus("disconnected", "Watch 5 terputus. Cek sesi jam; rekaman GPS tetap berjalan.")
+      if desiredRideState == "active" { findWatch() }
+    }
   }
 
   func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
@@ -253,7 +270,15 @@ final class RealmeWatchHeartRate: NSObject, CBCentralManagerDelegate, CBPeripher
     if notificationsReady {
       scanTimeout?.invalidate()
       changeStatus("ready")
-      if desiredRideState == "active" { requestSessionStart() }
+      if desiredRideState == "active" {
+        if sessionTime == nil {
+          requestSessionStart()
+        } else if isExternalSession {
+          beginPolling()
+        } else {
+          resumeRide()
+        }
+      }
     } else { changeStatus("error", "Notifikasi Watch 5 belum dapat diaktifkan.") }
   }
 
