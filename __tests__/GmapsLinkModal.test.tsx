@@ -82,4 +82,21 @@ describe('GmapsLinkModal', () => {
     expect(mockOnRouteCreated).toHaveBeenCalledWith(mockRoute);
     expect(mockOnClose).toHaveBeenCalled();
   });
+
+  it('allows an active ride to retain the starting point from the link', async () => {
+    const convert = jest.spyOn(gmapsPipeline, 'gmapsLinkToGpxRoute').mockResolvedValue(mockRoute);
+    let screen: ReactTestRenderer.ReactTestRenderer;
+    await ReactTestRenderer.act(() => {
+      screen = ReactTestRenderer.create(<GmapsLinkModal visible onClose={jest.fn()} onRouteCreated={jest.fn()} userCoordinate={[115.2, -8.6]} startFromCurrentPosition />);
+    });
+    await ReactTestRenderer.act(() => {
+      screen!.root.findByProps({ accessibilityLabel: 'Input link Google Maps' }).props.onChangeText('https://maps.app.goo.gl/example');
+      screen!.root.findByProps({ accessibilityLabel: 'Mulai rute dari lokasi saat ini' }).props.onValueChange(false);
+    });
+    await ReactTestRenderer.act(async () => {
+      await screen!.root.findByProps({ accessibilityLabel: 'Konversi link menjadi rute GPX' }).props.onPress();
+    });
+    expect(convert).toHaveBeenLastCalledWith('https://maps.app.goo.gl/example', expect.any(Function), [115.2, -8.6], {}, false);
+    ReactTestRenderer.act(() => screen!.unmount());
+  });
 });

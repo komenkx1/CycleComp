@@ -200,8 +200,9 @@ describe('TerrainPackManager', () => {
     });
 
     expect(renderer!.root.findByProps({ children: 'Belum tersedia di server' })).toBeTruthy();
+    expect(renderer!.root.findByProps({ children: 'Impor paket dari File' })).toBeTruthy();
     expect(renderer!.root.findByProps({
-      children: 'Paket elevasi untuk area ini belum tersedia. Siapkan dari data medan nasional di server.',
+      children: 'Paket elevasi untuk area ini belum tersedia di katalog server.',
     })).toBeTruthy();
     expect(renderer!.root.findAllByProps({ children: 'bali-pilot-1' })).toHaveLength(0);
     await act(async () => { renderer!.unmount(); });

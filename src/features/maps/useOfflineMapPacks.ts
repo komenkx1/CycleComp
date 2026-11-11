@@ -106,7 +106,7 @@ export function useOfflineMapPacks() {
           bounds,
           minZoom: 0,
           maxZoom: 15,
-          metadata: { sourceId: INDONESIA_MAP_SOURCE_ID },
+          metadata: { sourceId: INDONESIA_MAP_SOURCE_ID, mapStyle: INDONESIA_MAP_STYLE_URL },
         },
         (updatedPack, status) => updatePack(updatedPack, status),
         (_, error) => setMapPackError(error.message),
@@ -139,6 +139,10 @@ export function useOfflineMapPacks() {
     }
     try {
       setMapPackError(null);
+      if (pack.metadata.mapStyle !== INDONESIA_MAP_STYLE_URL) {
+        await updateArea(packId, pack.bounds);
+        return;
+      }
       observePack(pack);
       await pack.resume();
     } catch (error) {
@@ -174,7 +178,7 @@ export function useOfflineMapPacks() {
           bounds,
           minZoom: 0,
           maxZoom: 15,
-          metadata: { sourceId: INDONESIA_MAP_SOURCE_ID },
+          metadata: { sourceId: INDONESIA_MAP_SOURCE_ID, mapStyle: INDONESIA_MAP_STYLE_URL },
         },
         (updatedPack, status) => {
           setAreaUpdateProgress(previousProgress => ({

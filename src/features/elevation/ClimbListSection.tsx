@@ -1,7 +1,6 @@
 import React from 'react';
 import {
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -46,12 +45,7 @@ export function ClimbListSection({
         </Text>
       </View>
 
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.cardsScrollContent}
-        style={styles.cardsScrollView}
-      >
+      <View style={styles.climbList}>
         {climbs.map((climb, index) => {
           const isSelected = selectedClimbId === climb.id;
           const avgGradeColor = getGradeColor(climb.averageGradePercent);
@@ -63,7 +57,8 @@ export function ClimbListSection({
             <Pressable
               key={climb.id}
               accessibilityLabel={`Tanjakan ${index + 1} dari ${climbs.length}, panjang ${lengthKm} kilometer, elevasi naik ${climb.elevationGainMeters} meter`}
-              accessibilityRole="button"
+              accessibilityRole={onSelectClimb ? 'button' : undefined}
+              disabled={!onSelectClimb}
               onPress={() => onSelectClimb?.(climb)}
               style={({ pressed }) => [
                 styles.climbCard,
@@ -119,13 +114,15 @@ export function ClimbListSection({
               </View>
 
               {/* Focus on Map Action */}
-              <View style={styles.cardActionRow}>
-                <Text style={styles.cardActionText}>⌖ Fokus di peta</Text>
-              </View>
+              {onSelectClimb ? (
+                <View style={styles.cardActionRow}>
+                  <Text style={styles.cardActionText}>⌖ Fokus di peta</Text>
+                </View>
+              ) : null}
             </Pressable>
           );
         })}
-      </ScrollView>
+      </View>
     </View>
   );
 }
@@ -138,8 +135,10 @@ const styles = StyleSheet.create({
   headerRow: {
     alignItems: 'center',
     flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
     justifyContent: 'space-between',
-    marginBottom: 8,
+    marginBottom: 10,
   },
   titleWithIcon: {
     alignItems: 'center',
@@ -148,30 +147,27 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     color: AmoledTheme.textSecondary,
-    fontSize: 11,
+    fontSize: 14,
     fontWeight: '700',
     letterSpacing: 0.5,
   },
   headerSummary: {
     color: AmoledTheme.textPrimary,
-    fontSize: 11,
+    fontSize: 14,
     fontVariant: ['tabular-nums'],
     fontWeight: '600',
   },
-  cardsScrollView: {
-    overflow: 'visible',
-  },
-  cardsScrollContent: {
+  climbList: {
     gap: 10,
-    paddingRight: 10,
   },
   climbCard: {
     backgroundColor: AmoledTheme.surfaceElevated,
     borderColor: AmoledTheme.borderDefault,
     borderRadius: 14,
     borderWidth: StyleSheet.hairlineWidth,
-    minWidth: 175,
-    padding: 10,
+    minHeight: 120,
+    padding: 16,
+    width: '100%',
   },
   climbCardSelected: {
     borderColor: AmoledTheme.accentOrange,
@@ -184,7 +180,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 6,
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 10,
   },
   climbIndexPill: {
     borderRadius: 6,
@@ -193,12 +191,12 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
   },
   climbIndexPillText: {
-    fontSize: 10,
+    fontSize: 14,
     fontWeight: '700',
   },
   startDistanceText: {
     color: AmoledTheme.textSecondary,
-    fontSize: 10,
+    fontSize: 14,
     fontVariant: ['tabular-nums'],
     fontWeight: '600',
   },
@@ -210,18 +208,18 @@ const styles = StyleSheet.create({
   },
   gainNumberText: {
     color: AmoledTheme.textPrimary,
-    fontSize: 20,
+    fontSize: 28,
     fontVariant: ['tabular-nums'],
     fontWeight: '800',
   },
   gainUnitText: {
     color: AmoledTheme.textSecondary,
-    fontSize: 12,
+    fontSize: 16,
     fontWeight: '600',
   },
   climbLengthText: {
     color: AmoledTheme.textSecondary,
-    fontSize: 12,
+    fontSize: 16,
     fontVariant: ['tabular-nums'],
     fontWeight: '600',
   },
@@ -230,19 +228,19 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     flexDirection: 'row',
     justifyContent: 'space-around',
-    marginBottom: 6,
-    paddingVertical: 4,
+    marginBottom: 10,
+    paddingVertical: 8,
   },
   gradeBadge: {
     alignItems: 'center',
   },
   gradeBadgeLabel: {
     color: AmoledTheme.textSecondary,
-    fontSize: 9,
+    fontSize: 14,
     marginBottom: 1,
   },
   gradeBadgeValue: {
-    fontSize: 11,
+    fontSize: 18,
     fontVariant: ['tabular-nums'],
     fontWeight: '700',
   },
@@ -250,11 +248,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderTopColor: AmoledTheme.borderSubtle,
     borderTopWidth: StyleSheet.hairlineWidth,
-    paddingTop: 6,
+    paddingTop: 10,
   },
   cardActionText: {
     color: AmoledTheme.accentOrange,
-    fontSize: 10,
+    fontSize: 14,
     fontWeight: '600',
   },
 });

@@ -12,21 +12,17 @@ interface StravaSettingsCardProps {
   onDisconnect: () => Promise<void>;
 }
 
-export function StravaSettingsCard({
-  isConnected,
-  athlete,
-  onConnect,
-  onDisconnect,
-}: StravaSettingsCardProps) {
+export function StravaSettingsCard({ isConnected, athlete, onConnect, onDisconnect }: StravaSettingsCardProps) {
+  const [expanded, setExpanded] = useState(false);
   const [connecting, setConnecting] = useState(false);
+  const athleteName = athlete ? `${athlete.firstname} ${athlete.lastname}`.trim() : '';
 
   async function handleConnect() {
     setConnecting(true);
     try {
       await onConnect();
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Gagal membuka halaman otorisasi Strava.';
-      Alert.alert('Gagal Terhubung', msg);
+    } catch (error) {
+      Alert.alert('Gagal Terhubung', error instanceof Error ? error.message : 'Gagal membuka halaman otorisasi Strava.');
     } finally {
       setConnecting(false);
     }
@@ -35,265 +31,128 @@ export function StravaSettingsCard({
   function handleConfirmDisconnect() {
     Alert.alert(
       'Putuskan Akun Strava?',
-      'CycleComp tidak akan lagi dapat mengunggah rekaman gowes secara otomatis sampai Anda menghubungkan kembali.',
+      'CycleComp tidak dapat mengunggah perjalanan ke Strava sampai akun dihubungkan kembali.',
       [
         { text: 'Batal', style: 'cancel' },
-        {
-          text: 'Putuskan',
-          style: 'destructive',
-          onPress: () => onDisconnect(),
-        },
+        { text: 'Putuskan', style: 'destructive', onPress: () => onDisconnect() },
       ],
     );
   }
 
   return (
-    <View style={styles.cardContainer}>
-      <View style={styles.cardHeader}>
-        <View style={styles.iconCircle}>
-          <SFIcon name="arrow.up.circle.fill" color="#FC4C02" size={20} />
-        </View>
-        <View style={styles.headerTitleCol}>
-          <Text style={styles.cardTitle}>Strava</Text>
-          <Text style={styles.cardSubtitle}>
-            Sinkronkan rekaman gowes, elevasi barometer & detak jantung ke feed Strava
+    <View style={styles.container}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Strava"
+        accessibilityState={{ expanded }}
+        onPress={() => setExpanded(current => !current)}
+        style={({ pressed }) => [styles.heading, pressed && styles.pressed]}
+      >
+        <View style={styles.headingText}>
+          <Text style={styles.title}>Strava</Text>
+          <Text style={styles.summary}>
+            {isConnected ? (athleteName ? `Terhubung sebagai ${athleteName}` : 'Terhubung') : 'Belum terhubung'}
           </Text>
         </View>
-        <View
-          style={[
-            styles.statusBadge,
-            isConnected ? styles.statusBadgeConnected : styles.statusBadgeIdle,
-          ]}
-        >
-          <Text
-            style={[
-              styles.statusBadgeText,
-              isConnected ? styles.statusBadgeTextConnected : styles.statusBadgeTextIdle,
-            ]}
-          >
-            {isConnected ? 'TERHUBUNG' : 'BELUM TERHUBUNG'}
-          </Text>
-        </View>
-      </View>
+        <SFIcon name={expanded ? 'chevron.up' : 'chevron.down'} color={AmoledTheme.textSecondary} size={16} />
+      </Pressable>
 
-      {isConnected && athlete ? (
-        <View style={styles.athleteProfileBox}>
-          <View style={styles.athleteAvatarCircle}>
-            <SFIcon name="person.crop.circle.fill" color={AmoledTheme.textPrimary} size={30} />
-          </View>
-          <View style={styles.athleteInfoCol}>
-            <Text style={styles.athleteName}>
-              {`${athlete.firstname} ${athlete.lastname}`.trim() || 'Atlet Strava'}
+      {expanded ? (
+        <View style={styles.details}>
+          <Text style={styles.sectionLabel}>INTEGRASI AKUN</Text>
+          <View style={styles.statusCard}>
+            <Text style={[styles.status, isConnected && styles.connectedStatus]}>
+              {isConnected ? 'TERHUBUNG' : 'BELUM TERHUBUNG'}
             </Text>
-            <Text style={styles.athleteIdText}>ID Atlet Strava: #{athlete.id}</Text>
+            {isConnected && athleteName ? <Text style={styles.athleteName}>{athleteName}</Text> : null}
+            <Text style={styles.description}>
+              {isConnected
+                ? 'Rekaman dapat diunggah dari detail Riwayat.'
+                : 'Hubungkan akun untuk mengunggah rekaman dari Riwayat.'}
+            </Text>
           </View>
-          <View style={styles.activeCheckBadge}>
-            <SFIcon name="checkmark.circle.fill" color={AmoledTheme.accentGreen} size={16} />
-          </View>
-        </View>
-      ) : null}
-
-      {/* Actions */}
-      <View style={styles.actionsRow}>
-        {!isConnected ? (
-          <View style={styles.connectContainer}>
+          {!isConnected ? (
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Hubungkan ke akun Strava"
               disabled={connecting}
               onPress={handleConnect}
-              style={({ pressed }) => [
-                styles.primaryButton,
-                pressed && styles.primaryButtonPressed,
-                connecting && styles.buttonDisabled,
-              ]}
+              style={({ pressed }) => [styles.connectButton, pressed && styles.pressed, connecting && styles.disabled]}
             >
-              {connecting ? (
-                <ActivityIndicator color="#FFFFFF" size="small" />
-              ) : (
-                <SFIcon name="link" color="#FFFFFF" size={16} />
-              )}
-              <Text style={styles.primaryButtonText}>
-                {connecting ? 'Membuka Strava...' : 'Hubungkan ke Strava'}
-              </Text>
+              {connecting ? <ActivityIndicator color="#FFFFFF" size="small" /> : null}
+              <Text style={styles.connectButtonText}>{connecting ? 'Membuka Strava...' : 'Hubungkan ke Strava'}</Text>
             </Pressable>
-            <Text style={styles.hintText}>
-              Bebas login menggunakan Google, Apple, atau akun Strava Anda
-            </Text>
-          </View>
-        ) : (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Putuskan hubungan dengan Strava"
-            onPress={handleConfirmDisconnect}
-            style={({ pressed }) => [
-              styles.disconnectButton,
-              pressed && styles.disconnectButtonPressed,
-            ]}
-          >
-            <SFIcon name="link.badge.plus" color={AmoledTheme.accentRed} size={14} />
-            <Text style={styles.disconnectButtonText}>Putuskan Akun</Text>
-          </Pressable>
-        )}
-      </View>
+          ) : (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Putuskan hubungan dengan Strava"
+              onPress={handleConfirmDisconnect}
+              style={({ pressed }) => [styles.disconnectButton, pressed && styles.pressed]}
+            >
+              <Text style={styles.disconnectButtonText}>Putuskan akun</Text>
+            </Pressable>
+          )}
+        </View>
+      ) : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  cardContainer: {
-    backgroundColor: AmoledTheme.surfaceElevated,
-    borderColor: AmoledTheme.borderSubtle,
-    borderRadius: 14,
-    borderWidth: StyleSheet.hairlineWidth,
-    marginBottom: 12,
-    padding: 14,
+  container: {
+    borderBottomColor: AmoledTheme.borderSubtle,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  cardHeader: {
+  heading: {
+    alignItems: 'center',
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
+    minHeight: 76,
+    paddingVertical: 12,
   },
-  iconCircle: {
-    width: 38,
-    height: 38,
-    borderRadius: 10,
-    backgroundColor: 'rgba(252, 76, 2, 0.15)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  headerTitleCol: {
-    flex: 1,
-  },
-  cardTitle: {
-    color: AmoledTheme.textPrimary,
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  cardSubtitle: {
+  headingText: { flex: 1, paddingRight: 12 },
+  title: { color: AmoledTheme.textPrimary, fontSize: 17, fontWeight: '700' },
+  summary: { color: AmoledTheme.textSecondary, fontSize: 14, lineHeight: 20, marginTop: 4 },
+  details: { paddingBottom: 20, paddingTop: 4 },
+  sectionLabel: {
     color: AmoledTheme.textSecondary,
-    fontSize: 11,
-    marginTop: 2,
-    lineHeight: 15,
-  },
-  statusBadge: {
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-    borderRadius: 6,
-    borderWidth: 1,
-  },
-  statusBadgeConnected: {
-    backgroundColor: 'rgba(16, 185, 129, 0.15)',
-    borderColor: 'rgba(16, 185, 129, 0.4)',
-  },
-  statusBadgeIdle: {
-    backgroundColor: 'rgba(148, 163, 184, 0.1)',
-    borderColor: 'rgba(148, 163, 184, 0.25)',
-  },
-  statusBadgeText: {
-    fontSize: 9,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-  statusBadgeTextConnected: {
-    color: AmoledTheme.accentGreen,
-  },
-  statusBadgeTextIdle: {
-    color: AmoledTheme.textSecondary,
-  },
-  athleteProfileBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: AmoledTheme.surfaceInteractive,
-    borderColor: AmoledTheme.borderSubtle,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 10,
-    padding: 12,
-    marginTop: 12,
-    gap: 10,
-  },
-  athleteAvatarCircle: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  athleteInfoCol: {
-    flex: 1,
-  },
-  athleteName: {
-    color: AmoledTheme.textPrimary,
     fontSize: 14,
     fontWeight: '700',
+    letterSpacing: 0.5,
+    marginBottom: 10,
   },
-  athleteIdText: {
-    color: AmoledTheme.textSecondary,
-    fontSize: 11,
-    marginTop: 2,
+  statusCard: {
+    backgroundColor: AmoledTheme.surfaceElevated,
+    borderColor: AmoledTheme.borderDefault,
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    padding: 16,
   },
-  activeCheckBadge: {
-    padding: 4,
-  },
-  actionsRow: {
-    marginTop: 12,
-  },
-  connectContainer: {
-    width: '100%',
+  status: { color: AmoledTheme.textSecondary, fontSize: 14, fontWeight: '700' },
+  connectedStatus: { color: AmoledTheme.accentGreen },
+  athleteName: { color: AmoledTheme.textPrimary, fontSize: 22, fontWeight: '700', marginTop: 8 },
+  description: { color: AmoledTheme.textSecondary, fontSize: 15, lineHeight: 22, marginTop: 8 },
+  connectButton: {
     alignItems: 'center',
-    gap: 6,
-  },
-  primaryButton: {
-    width: '100%',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
     backgroundColor: '#FC4C02',
     borderRadius: 10,
-    minHeight: 44,
-    paddingHorizontal: 16,
-    shadowColor: '#FC4C02',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 6,
-  },
-  primaryButtonPressed: {
-    opacity: 0.85,
-  },
-  primaryButtonText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  hintText: {
-    color: AmoledTheme.textSecondary,
-    fontSize: 11,
-    textAlign: 'center',
-    marginTop: 2,
-  },
-  buttonDisabled: {
-    opacity: 0.6,
-  },
-  disconnectButton: {
-    width: '100%',
     flexDirection: 'row',
-    alignItems: 'center',
+    gap: 8,
     justifyContent: 'center',
-    gap: 6,
-    backgroundColor: 'rgba(239, 68, 68, 0.1)',
-    borderColor: 'rgba(239, 68, 68, 0.3)',
-    borderWidth: 1,
+    marginTop: 12,
+    minHeight: 50,
+    paddingHorizontal: 16,
+  },
+  connectButtonText: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
+  disconnectButton: {
+    alignItems: 'center',
+    borderColor: AmoledTheme.accentRed,
     borderRadius: 10,
-    minHeight: 38,
-    paddingHorizontal: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    justifyContent: 'center',
+    marginTop: 12,
+    minHeight: 50,
   },
-  disconnectButtonPressed: {
-    backgroundColor: 'rgba(239, 68, 68, 0.2)',
-  },
-  disconnectButtonText: {
-    color: AmoledTheme.accentRed,
-    fontSize: 12,
-    fontWeight: '600',
-  },
+  disconnectButtonText: { color: AmoledTheme.accentRed, fontSize: 16, fontWeight: '700' },
+  pressed: { opacity: 0.7 },
+  disabled: { opacity: 0.6 },
 });

@@ -8,6 +8,7 @@ RCT_EXTERN_METHOD(getActiveRideRoute:(RCTPromiseResolveBlock)resolve rejecter:(R
 RCT_EXTERN_METHOD(setActiveRideRoute:(NSString *)routeJSON resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 RCT_EXTERN_METHOD(getRideElevationTrack:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 RCT_EXTERN_METHOD(setAutoPauseEnabled:(BOOL)enabled resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
+RCT_EXTERN_METHOD(setVirtualPowerMass:(double)massKg resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 RCT_EXTERN_METHOD(setSensorDiagnosticsEnabled:(BOOL)enabled resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 RCT_EXTERN_METHOD(setWatchHeartRateEnabled:(BOOL)enabled resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 RCT_EXTERN_METHOD(startRide:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)

@@ -8,7 +8,7 @@ import {
 } from '@maplibre/maplibre-react-native';
 import type { RouteBounds } from '../src/domain/routes/gpx/GpxRoute';
 import { useOfflineMapPacks } from '../src/features/maps/useOfflineMapPacks';
-import { INDONESIA_MAP_SOURCE_ID } from '../src/features/maps/offlineMapSource';
+import { INDONESIA_MAP_SOURCE_ID, INDONESIA_MAP_STYLE_URL } from '../src/features/maps/offlineMapSource';
 
 jest.mock('@maplibre/maplibre-react-native', () => ({
   OfflineManager: {
@@ -21,6 +21,7 @@ jest.mock('@maplibre/maplibre-react-native', () => ({
 }));
 
 const offlineManagerMock = OfflineManager as unknown as {
+  addListener: jest.Mock;
   createPack: jest.Mock;
   deletePack: jest.Mock;
   getPacks: jest.Mock;
@@ -95,6 +96,7 @@ beforeEach(() => {
     packStatus('replacement-area', 'complete'),
   );
 
+  offlineManagerMock.addListener.mockReset().mockResolvedValue(undefined);
   offlineManagerMock.getPacks.mockReset().mockResolvedValue([originalPack]);
   offlineManagerMock.createPack.mockReset().mockImplementation(
     async (
@@ -182,5 +184,47 @@ test('keeps the current offline area when replacement download fails', async () 
   expect(hookState!.savedMapAreas.map(area => area.id)).toEqual(['original-area']);
   expect(hookState!.mapPackError).toBe('network unavailable');
 
+  await ReactTestRenderer.act(() => renderer.unmount());
+});
+
+
+test('replaces an older paused area using the current map address before removing it', async () => {
+  (originalPack.status as jest.Mock).mockResolvedValue(packStatus('original-area', 'inactive'));
+  (replacementPack.status as jest.Mock).mockResolvedValue(packStatus('replacement-area', 'active'));
+  const renderer = await renderOfflineMapPacks();
+  let resumeTask: Promise<void> | undefined;
+
+  await ReactTestRenderer.act(async () => {
+    resumeTask = hookState!.resumeArea('original-area');
+    await new Promise(resolve => setTimeout(resolve, 0));
+  });
+
+  expect(offlineManagerMock.createPack).toHaveBeenCalledWith(
+    expect.objectContaining({ mapStyle: INDONESIA_MAP_STYLE_URL, bounds: originalBounds }),
+    expect.any(Function),
+    expect.any(Function),
+  );
+  expect(originalPack.resume).not.toHaveBeenCalled();
+  expect(offlineManagerMock.deletePack).not.toHaveBeenCalled();
+
+  await ReactTestRenderer.act(async () => {
+    (replacementPack.status as jest.Mock).mockResolvedValue(packStatus('replacement-area', 'complete'));
+    reportProgress!(replacementPack, packStatus('replacement-area', 'complete'));
+    await resumeTask;
+  });
+  expect(offlineManagerMock.deletePack).toHaveBeenCalledWith('original-area');
+  await ReactTestRenderer.act(() => renderer.unmount());
+});
+
+
+test('resumes a paused area already using the current address', async () => {
+  originalPack.metadata.mapStyle = INDONESIA_MAP_STYLE_URL;
+  (originalPack.status as jest.Mock).mockResolvedValue(packStatus('original-area', 'inactive'));
+  const renderer = await renderOfflineMapPacks();
+
+  await ReactTestRenderer.act(async () => { await hookState!.resumeArea('original-area'); });
+
+  expect(originalPack.resume).toHaveBeenCalledTimes(1);
+  expect(offlineManagerMock.createPack).not.toHaveBeenCalled();
   await ReactTestRenderer.act(() => renderer.unmount());
 });

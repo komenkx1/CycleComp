@@ -6,6 +6,14 @@ import {
 } from '../src/domain/routes/search/resolveGoogleMapsUrl';
 
 describe('resolveGoogleMapsUrl', () => {
+  it('preserves the three ordered pins in a shared directions link', () => {
+    const link = 'https://www.google.com/maps/dir/Start/Stop/Finish/@-8.65,115.2,15z/data=!3m1!4b1!4m20!4m19!1m5!1m1!1splace1!2m2!1d115.21!2d-8.69!1m5!1m1!1splace2!2m2!1d115.22!2d-8.65!1m5!1m1!1splace3!2m2!1d115.24!2d-8.66!3e9';
+    expect(extractWaypoints(link)).toEqual([
+      { type: 'coordinate', latitude: -8.69, longitude: 115.21 },
+      { type: 'coordinate', latitude: -8.65, longitude: 115.22 },
+      { type: 'coordinate', latitude: -8.66, longitude: 115.24 },
+    ]);
+  });
   describe('looksLikeGoogleMapsUrl', () => {
     it('detects short links', () => {
       expect(looksLikeGoogleMapsUrl('https://maps.app.goo.gl/abcdef')).toBe(true);

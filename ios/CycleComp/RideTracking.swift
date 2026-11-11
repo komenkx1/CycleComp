@@ -45,6 +45,7 @@ private struct RidePoint: Codable {
   let liveGradeSampleCount: Int?
   let heartRateBpm: Int?
   let heartRateRecordedAt: Date?
+  let virtualPowerWatts: Double?
   let cumulativeDistanceMeters: Double?
 }
 
@@ -507,6 +508,20 @@ final class RideTracking: RCTEventEmitter, CLLocationManagerDelegate {
     }
   }
 
+  @objc(setVirtualPowerMass:resolver:rejecter:)
+  func setVirtualPowerMass(_ massKg: Double, resolver resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
+    guard rideRecord == nil else {
+      reject("ride_exists", "Atur berat sebelum memulai perjalanan.", nil)
+      return
+    }
+    guard massKg.isFinite, massKg == 0 || (30...250).contains(massKg) else {
+      reject("invalid_mass", "Berat gabungan harus antara 30 dan 250 kg.", nil)
+      return
+    }
+    UserDefaults.standard.set(massKg, forKey: "CycleCompVirtualPowerMassKg")
+    resolve(currentSnapshot())
+  }
+
   @objc(setSensorDiagnosticsEnabled:resolver:rejecter:)
   func setSensorDiagnosticsEnabled(_ enabled: Bool, resolver resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
     guard rideRecord == nil else {
@@ -790,7 +805,11 @@ final class RideTracking: RCTEventEmitter, CLLocationManagerDelegate {
 
     appendFormField(name: "data_type", value: "gpx")
     appendFormField(name: "name", value: activityName.isEmpty ? "CycleComp ride" : activityName)
-    appendFormField(name: "description", value: "Direkam dengan CycleComp · Barometer elevation & Live metrics")
+    let hasEstimatedPower = String(data: gpxData, encoding: .utf8)?.contains("<cyclecomp:powerSource>estimated</cyclecomp:powerSource>") == true
+    let description = hasEstimatedPower
+      ? "Direkam dengan CycleComp · Power adalah estimasi, bukan pengukuran power meter."
+      : "Direkam dengan CycleComp · Barometer elevation & Live metrics"
+    appendFormField(name: "description", value: description)
 
     let filename = url.lastPathComponent
     if let boundaryData = "--\(boundary)\r\n".data(using: .utf8),
@@ -1420,6 +1439,13 @@ final class RideTracking: RCTEventEmitter, CLLocationManagerDelegate {
       return sampleAgeSeconds >= 0 && sampleAgeSeconds <= 15
     } ?? false
 
+    let virtualPowerWatts = recordedMotionState == .stationary ? nil :
+      RideVirtualPower.estimateWatts(
+        speedMetersPerSecond: recordedMotionState == .moving && recordedSpeedSource != "held" && location.horizontalAccuracy > 0 && location.horizontalAccuracy <= 25 ? filteredSpeed : nil,
+        gradePercent: liveGrade,
+        totalMassKg: UserDefaults.standard.double(forKey: "CycleCompVirtualPowerMassKg")
+      )
+
     let point = RidePoint(
       timestamp: location.timestamp,
       latitude: location.coordinate.latitude,
@@ -1451,6 +1477,7 @@ final class RideTracking: RCTEventEmitter, CLLocationManagerDelegate {
       liveGradeSampleCount: liveGrade == nil ? nil : gradeEstimator.measurementSampleCount,
       heartRateBpm: heartRateIsFresh ? watchHeartRate.currentHeartRate : nil,
       heartRateRecordedAt: heartRateIsFresh ? watchHeartRate.lastSampleAt : nil,
+      virtualPowerWatts: virtualPowerWatts,
       cumulativeDistanceMeters: distanceMeters
     )
 
@@ -1680,6 +1707,7 @@ final class RideTracking: RCTEventEmitter, CLLocationManagerDelegate {
       "motionAccelerationRmsG": motionSummary?.accelerationRmsG ?? NSNull(),
       "motionRotationRmsRadiansPerSecond": motionSummary?.rotationRmsRadiansPerSecond ?? NSNull(),
       "watchHeartRateEnabled": watchHeartRate.enabled,
+      "virtualPowerMassKg": UserDefaults.standard.double(forKey: "CycleCompVirtualPowerMassKg"),
       "watchHeartRateStatus": watchHeartRate.status,
       "watchHeartRateMessage": watchHeartRate.message ?? NSNull(),
       "heartRateBpm": watchHeartRate.currentHeartRate ?? NSNull(),
@@ -1713,6 +1741,8 @@ final class RideTracking: RCTEventEmitter, CLLocationManagerDelegate {
       "descentMeters": ascentAccumulator.descentMeters,
       "elevationDataAvailable": ridePoints.contains { $0.elevationMeters != nil },
       "speedMetersPerSecond": latestPoint?.filteredSpeedMetersPerSecond ?? NSNull(),
+      "virtualPowerWatts": record.status == "active" && autoPausePolicy.state == .moving && !(record.autoPaused ?? false)
+        ? latestPoint?.virtualPowerWatts ?? NSNull() : NSNull(),
       "speedSource": latestPoint?.speedSource ?? NSNull(),
       "rawSpeedMetersPerSecond": latestPoint?.speedMetersPerSecond ?? NSNull(),
       "speedAccuracyMetersPerSecond": latestPoint?.speedAccuracyMetersPerSecond ?? NSNull(),
@@ -1936,6 +1966,10 @@ final class RideTracking: RCTEventEmitter, CLLocationManagerDelegate {
       if let motionState = point.motionState { lines.append("<cyclecomp:motionState>\(motionState)</cyclecomp:motionState>") }
       if let bpm = point.heartRateBpm {
         lines.append("<gpxtpx:TrackPointExtension><gpxtpx:hr>\(bpm)</gpxtpx:hr></gpxtpx:TrackPointExtension>")
+      }
+      if let watts = point.virtualPowerWatts {
+        lines.append("<power>\(Int(watts.rounded()))</power>")
+        lines.append("<cyclecomp:powerSource>estimated</cyclecomp:powerSource>")
       }
       lines.append("</extensions></trkpt>")
     }

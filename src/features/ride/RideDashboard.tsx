@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   LayoutAnimation,
   PanResponder,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -17,10 +19,12 @@ import { SFIcon } from '../../components/SFIcon';
 import { AmoledSwitch } from '../../components/AmoledSwitch';
 import {
   type ClimbAlertState,
+  type RouteSample,
   formatGradePercent,
   getGradeColor,
   getShortGradeLabel,
 } from '../../domain/routes/elevation/routeElevationAnalysis';
+import { ElevationProfileChart } from '../elevation/ElevationProfileChart';
 
 type RideDashboardProps = {
   visible?: boolean;
@@ -31,6 +35,7 @@ type RideDashboardProps = {
   currentGrade?: number | null;
   currentGradeSource?: 'barometer' | 'gps' | null;
   climbAlert?: ClimbAlertState;
+  routeSamples?: RouteSample[];
   povMode?: '3d' | '2d';
   onTogglePov?: () => void;
   enduranceActive?: boolean;
@@ -58,6 +63,7 @@ export function RideDashboard({
   currentGrade = null,
   currentGradeSource = null,
   climbAlert,
+  routeSamples,
   povMode = '3d',
   onTogglePov,
   enduranceActive = false,
@@ -77,10 +83,13 @@ export function RideDashboard({
 }: RideDashboardProps) {
   const [expanded, setExpanded] = useState(false);
   const [minimized, setMinimized] = useState(false);
+  const [ridePage, setRidePage] = useState<'map' | 'data' | 'climb'>('map');
   const [currentTime, setCurrentTime] = useState(Date.now);
   const [lastKnownSpeed, setLastKnownSpeed] = useState<number | null>(null);
   const insets = useSafeAreaInsets();
-  const fixAgeMilliseconds = ride.lastFixAt ? currentTime - Date.parse(ride.lastFixAt) : Infinity;
+  const { height: windowHeight } = useWindowDimensions();
+  const snapshotCheckTime = Date.now();
+  const fixAgeMilliseconds = ride.lastFixAt ? snapshotCheckTime - Date.parse(ride.lastFixAt) : Infinity;
   const recentGpsFix = fixAgeMilliseconds >= 0 && fixAgeMilliseconds <= 10000;
   const showsOfflineTerrainClimb = ride.status === 'active' && !ride.autoPaused && recentGpsFix &&
     (!climbAlert || climbAlert.type === 'none') &&
@@ -101,7 +110,7 @@ export function RideDashboard({
   }, [ride.autoPaused, ride.status, ride.speedMetersPerSecond]);
 
   useEffect(() => {
-    const estimatedHeight = minimized ? 96 + (showsOfflineTerrainClimb ? 24 : 0) : (expanded ? 590 : 340) + (showsOfflineTerrainClimb ? 74 : 0);
+    const estimatedHeight = minimized ? 150 + (showsOfflineTerrainClimb ? 24 : 0) : (expanded ? 590 : 340) + (showsOfflineTerrainClimb ? 74 : 0);
     onHeightChange?.(estimatedHeight);
   }, [minimized, expanded, showsOfflineTerrainClimb, onHeightChange]);
 
@@ -134,13 +143,36 @@ export function RideDashboard({
     },
   }), [expanded, minimized]);
 
+  const pageTouchStart = useRef<{ x: number; y: number } | null>(null);
+
+  function finishPageSwipe(endX: number, endY: number) {
+    const start = pageTouchStart.current;
+    pageTouchStart.current = null;
+    if (!start) return;
+    const horizontalDistance = endX - start.x;
+    const verticalDistance = endY - start.y;
+    if (Math.abs(horizontalDistance) < 50 || Math.abs(horizontalDistance) <= Math.abs(verticalDistance) * 1.5) return;
+    const pages = ['map', 'data', 'climb'] as const;
+    const pageOffset = horizontalDistance < 0 ? 1 : -1;
+    setRidePage(currentPage => {
+      const nextIndex = Math.max(0, Math.min(pages.length - 1, pages.indexOf(currentPage) + pageOffset));
+      return pages[nextIndex];
+    });
+  }
+
   const rideIsRecording = ride.status === 'active';
   const rideIsRecoverable = ride.status === 'recoveryNeeded';
   const elapsedSeconds = rideElapsedSeconds(ride, currentTime);
   const timerSeconds = rideDurationSeconds(ride, currentTime);
-  const heartRateAgeMilliseconds = ride.heartRateRecordedAt ? currentTime - Date.parse(ride.heartRateRecordedAt) : Infinity;
+  const heartRateAgeMilliseconds = ride.heartRateRecordedAt ? snapshotCheckTime - Date.parse(ride.heartRateRecordedAt) : Infinity;
   const recentHeartRate = heartRateAgeMilliseconds >= 0 && heartRateAgeMilliseconds <= 15000;
-  const displayedHeartRate = rideIsRecording && recentHeartRate ? ride.heartRateBpm : null;
+  const displayedHeartRate = ride.watchHeartRateEnabled && rideIsRecording && !ride.autoPaused && recentHeartRate ? ride.heartRateBpm : null;
+  const minimizedHeartRateLabel = !ride.watchHeartRateEnabled ? 'HR NONAKTIF' :
+    !rideIsRecording || ride.autoPaused ? 'HR DIJEDA' :
+    displayedHeartRate != null ? 'HEART RATE' :
+    ride.watchHeartRateStatus === 'disconnected' ? 'HR TERPUTUS' :
+    ride.watchHeartRateStatus === 'error' ? 'HR BERMASALAH' : 'MENUNGGU HR';
+  const displayedPower = rideIsRecording && !ride.autoPaused && recentGpsFix ? ride.virtualPowerWatts : null;
   const currentSpeed = ride.autoPaused || ride.status === 'paused'
     ? 0
     : rideIsRecording && recentGpsFix
@@ -151,12 +183,17 @@ export function RideDashboard({
     ? 'Rata-rata —'
     : `Rata-rata ${formatSpeedKmh(averageSpeedKmh)} km/j`;
   const displayedGrade = currentGradeSource ? currentGrade : null;
+  const climbProfileSamples = useMemo(() => {
+    if (!climbAlert || climbAlert.type === 'none' || !routeSamples) return [];
+    return routeSamples.filter(sample => sample.distanceMeters >= climbAlert.climb.startDistanceMeters &&
+      sample.distanceMeters <= climbAlert.climb.endDistanceMeters && sample.elevationMeters !== null);
+  }, [climbAlert, routeSamples]);
 
   if (!visible) { return null; }
 
   return (
-    <View pointerEvents="box-none" style={styles.bottomArea}>
-      <View pointerEvents="box-none" style={styles.mapControlsRow}>
+    <View pointerEvents="box-none" style={[styles.bottomArea, ridePage !== 'map' && !minimized && { top: insets.top + 140 }]}>
+      {ridePage === 'map' ? <View pointerEvents="box-none" style={styles.mapControlsRow}>
         <View style={styles.mapControlsStack}>
           {onAddDestination ? (
             <Pressable accessibilityRole="button" accessibilityLabel="Tambah tujuan" onPress={onAddDestination} style={styles.routeBackMapButton}>
@@ -228,7 +265,7 @@ export function RideDashboard({
             />
           </View>
         </View>
-      </View>
+      </View> : null}
       <View
         onLayout={e => {
           const h = e.nativeEvent.layout.height;
@@ -236,7 +273,7 @@ export function RideDashboard({
             onHeightChange?.(h);
           }
         }}
-        style={[styles.card, { paddingBottom: Math.max(insets.bottom, 16) + 8 }]}
+        style={[styles.card, ridePage !== 'map' && !minimized && styles.instrumentCard, { paddingBottom: Math.max(insets.bottom, 16) + 8 }]}
       >
         <View {...slideHandle.panHandlers}>
           <Pressable
@@ -262,47 +299,26 @@ export function RideDashboard({
           <View style={styles.minimizedContent}>
             <View style={styles.minimizedMetricsGroup}>
               <View style={styles.minimizedSpeedColumn}>
-                <View style={styles.minimizedSpeedBlock}>
-                  <Text style={styles.minimizedSpeedValue}>{formatSpeed(currentSpeed)}</Text>
-                  <Text style={styles.minimizedSpeedUnit}>km/j</Text>
-                </View>
-                <Text
-                  numberOfLines={1}
-                  testID="ride-average-speed"
-                  style={styles.minimizedAverageSpeed}
-                >
-                  {averageSpeedLabel}
+                <Text style={styles.minimizedMetricLabel}>KECEPATAN</Text>
+                <Text testID="minimized-speed" numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8} style={styles.minimizedSpeedValue}>
+                  {formatSpeed(currentSpeed)} <Text style={styles.minimizedSpeedUnit}>km/j</Text>
                 </Text>
               </View>
-              <View
-                style={[
-                  styles.gradePill,
-                  styles.minimizedGradePill,
-                  {
-                    backgroundColor: `${getGradeColor(currentGrade)}24`,
-                    borderColor: getGradeColor(currentGrade),
-                  },
-                ]}
-              >
-                <Text style={[styles.gradePillText, { color: getGradeColor(currentGrade) }]}>
-                  {formatGradePercent(currentGrade)}
+              <View style={styles.minimizedSpeedColumn} accessibilityLabel={
+                !ride.watchHeartRateEnabled ? 'Heart rate tidak aktif' :
+                !rideIsRecording || ride.autoPaused ? 'Heart rate dijeda' :
+                displayedHeartRate == null ? 'Heart rate tidak tersedia' : `Heart rate ${displayedHeartRate} bpm`
+              }>
+                <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8} style={styles.minimizedMetricLabel}>{minimizedHeartRateLabel}</Text>
+                <Text testID="minimized-heart-rate" numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8} style={styles.minimizedSpeedValue}>
+                  {displayedHeartRate ?? '—'} <Text style={styles.minimizedSpeedUnit}>bpm</Text>
                 </Text>
-              </View>
-              <View style={styles.minimizedDivider} />
-              <View style={styles.minimizedMetricItem}>
-                <Text style={styles.minimizedMetricValue}>{formatDistance(ride.distanceMeters)}</Text>
-                <Text style={styles.minimizedMetricLabel}>Jarak</Text>
-              </View>
-              <View style={styles.minimizedDivider} />
-              <View style={styles.minimizedMetricItem}>
-                <Text style={styles.minimizedMetricValue}>{formatDuration(elapsedSeconds)}</Text>
-                <Text style={styles.minimizedMetricLabel}>Waktu</Text>
               </View>
             </View>
 
             <View style={styles.minimizedActions}>
               <Pressable
-                accessibilityLabel={rideIsRecording ? 'Jeda' : 'Lanjutkan'}
+                accessibilityLabel={rideIsRecording ? 'Jeda' : rideIsRecoverable ? 'Pulihkan' : 'Lanjutkan'}
                 accessibilityRole="button"
                 disabled={busy}
                 onPress={rideIsRecording ? onPause : onResume}
@@ -329,11 +345,31 @@ export function RideDashboard({
               </Pressable>
             </View>
           </View>
+          <View style={styles.minimizedDetails}>
+            <View style={styles.minimizedMetricItem}>
+              <Text style={styles.minimizedMetricLabel}>RATA-RATA</Text>
+              <Text testID="ride-average-speed" accessibilityLabel={averageSpeedLabel} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8} style={styles.minimizedMetricValue}>
+                {averageSpeedKmh == null ? '—' : `${formatSpeedKmh(averageSpeedKmh)} km/j`}
+              </Text>
+            </View>
+            <View style={styles.minimizedMetricItem}>
+              <Text style={styles.minimizedMetricLabel}>GRADIEN</Text>
+              <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8} style={[styles.minimizedMetricValue, { color: getGradeColor(displayedGrade) }]}>{formatGradePercent(displayedGrade)}</Text>
+            </View>
+            <View style={styles.minimizedMetricItem}>
+              <Text style={styles.minimizedMetricLabel}>JARAK</Text>
+              <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8} style={styles.minimizedMetricValue}>{formatDistance(ride.distanceMeters)}</Text>
+            </View>
+            <View style={styles.minimizedMetricItem}>
+              <Text style={styles.minimizedMetricLabel}>WAKTU</Text>
+              <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8} style={styles.minimizedMetricValue}>{formatDuration(elapsedSeconds)}</Text>
+            </View>
+          </View>
           {showsOfflineTerrainClimb ? (
             <Text testID="minimized-terrain-climb-alert" style={styles.terrainClimbTitle}>
               {ride.terrainClimbStatus === 'active'
-                ? `Tanjakan aktif · sisa ${formatTerrainDistance(ride.terrainClimbDistanceRemainingMeters ?? 0)}`
-                : `Tanjakan ${Math.round(ride.terrainClimbDistanceToStartMeters ?? 0)} m lagi · ${formatGradePercent(ride.terrainClimbAverageGradePercent ?? null)}`}
+                ? `Tanjakan aktif · sisa ${ride.terrainClimbDistanceRemainingMeters == null ? '—' : formatTerrainDistance(ride.terrainClimbDistanceRemainingMeters)}`
+                : `Tanjakan ${ride.terrainClimbDistanceToStartMeters == null ? '—' : `${Math.round(ride.terrainClimbDistanceToStartMeters)} m`} lagi · ${formatGradePercent(ride.terrainClimbAverageGradePercent ?? null)}`}
             </Text>
           ) : null}
           </>
@@ -354,9 +390,9 @@ export function RideDashboard({
                 <Text numberOfLines={1} ellipsizeMode="tail" style={styles.statusText}>
                   {rideIsRecoverable
                     ? 'Perjalanan perlu dipulihkan'
-                    : rideIsRecording
-                    ? 'Merekam perjalanan'
-                    : ride.autoPaused ? 'Jeda otomatis · menunggu gerak' : 'Perjalanan dijeda'}
+                    : ride.autoPaused
+                    ? 'Jeda otomatis · menunggu gerak'
+                    : rideIsRecording ? 'Merekam perjalanan' : 'Perjalanan dijeda'}
                 </Text>
               </View>
               <View style={styles.headingRightBlock}>
@@ -378,67 +414,25 @@ export function RideDashboard({
                 </Pressable>
               </View>
             </View>
-            <View style={styles.primaryMetrics}>
-              <View style={styles.speedColumn}>
-                <View style={styles.speedBlock}>
-                  <Text style={styles.primaryValue}>{formatSpeed(currentSpeed)}</Text>
-                  <Text style={styles.speedUnit}>km/j</Text>
-                </View>
-                <Text
-                  numberOfLines={1}
-                  testID="ride-average-speed"
-                  style={styles.averageSpeedLabel}
+            <View style={styles.pageTabs} accessibilityRole="tablist">
+              {([
+                { id: 'map', label: 'Peta' },
+                { id: 'data', label: 'Data' },
+                { id: 'climb', label: 'Tanjakan' },
+              ] as const).map(page => (
+                <Pressable
+                  key={page.id}
+                  accessibilityRole="tab"
+                  accessibilityLabel={`Halaman ${page.label}`}
+                  accessibilityState={{ selected: ridePage === page.id }}
+                  onPress={() => setRidePage(page.id)}
+                  style={[styles.pageTab, ridePage === page.id && styles.pageTabSelected]}
                 >
-                  {averageSpeedLabel}
-                </Text>
-              </View>
-              <View style={styles.gradeBlock}>
-                <View
-                  style={[
-                    styles.gradePill,
-                    {
-                      backgroundColor: `${getGradeColor(displayedGrade)}24`,
-                      borderColor: getGradeColor(displayedGrade),
-                    },
-                  ]}
-                >
-                  <Text
-                    testID="ride-live-grade"
-                    style={[
-                      styles.gradePillText,
-                      { color: getGradeColor(displayedGrade) },
-                    ]}
-                  >
-                    {formatGradePercent(displayedGrade)}
+                  <Text style={[styles.pageTabLabel, ridePage === page.id && styles.pageTabLabelSelected]}>
+                    {page.label}
                   </Text>
-                </View>
-                <Text
-                  numberOfLines={1}
-                  ellipsizeMode="tail"
-                  style={styles.gradeLabel}
-                >
-                  {currentGradeSource
-                    ? `${getShortGradeLabel(currentGrade)} · ${currentGradeSource === 'barometer' ? 'barometer' : 'GPS'}`
-                    : 'Mengukur gradien'}
-                </Text>
-              </View>
-              <View style={styles.elevationBlock}>
-                <Text style={styles.elevationValue}>
-                  {ride.elevationMeters == null
-                    ? '—'
-                    : Math.round(ride.elevationMeters).toLocaleString('id-ID')}
-                </Text>
-                <Text style={styles.metricLabel}>
-                  {ride.elevationSource === 'barometer_gps'
-                    ? 'elevasi absolut (m)'
-                    : ride.elevationSource === 'gps' ? 'elevasi GPS (m)' : 'elevasi (m)'}
-                </Text>
-                {ride.relativeElevationMeters == null ? null : (
-                  <Text testID="ride-relative-elevation" style={styles.relativeElevationLabel}>
-                    Baro Δ {formatSignedElevationMeters(ride.relativeElevationMeters)} m
-                  </Text>
-                )}
-              </View>
+                </Pressable>
+              ))}
             </View>
         {showsOfflineTerrainClimb ? (
           <View
@@ -458,12 +452,12 @@ export function RideDashboard({
               </Text>
               <Text style={styles.terrainClimbDistance}>
                 {ride.terrainClimbStatus === 'active'
-                  ? `Sisa ${formatTerrainDistance(ride.terrainClimbDistanceRemainingMeters ?? 0)}`
-                  : `${Math.round(ride.terrainClimbDistanceToStartMeters ?? 0)} m lagi`}
+                  ? `Sisa ${ride.terrainClimbDistanceRemainingMeters == null ? '—' : formatTerrainDistance(ride.terrainClimbDistanceRemainingMeters)}`
+                  : `${ride.terrainClimbDistanceToStartMeters == null ? '—' : `${Math.round(ride.terrainClimbDistanceToStartMeters)} m`} lagi`}
               </Text>
             </View>
             <Text style={styles.terrainClimbMetrics}>
-              {`+${Math.round(ride.terrainClimbElevationGainMeters ?? 0)} m · rata-rata ${formatGradePercent(ride.terrainClimbAverageGradePercent ?? null)} · maks ${formatGradePercent(ride.terrainClimbMaxGradePercent ?? null)}`}
+              {`${ride.terrainClimbElevationGainMeters == null ? '—' : `+${Math.round(ride.terrainClimbElevationGainMeters)} m`} · rata-rata ${formatGradePercent(ride.terrainClimbAverageGradePercent ?? null)} · maks ${formatGradePercent(ride.terrainClimbMaxGradePercent ?? null)}`}
             </Text>
             <Text style={styles.terrainClimbSource}>
               {ride.forwardPathQuality === 'inferred_to_boundary'
@@ -476,6 +470,77 @@ export function RideDashboard({
             </Text>
           </View>
         ) : null}
+            <ScrollView
+              testID="ride-page-swipe"
+              onTouchStart={event => {
+                pageTouchStart.current = { x: event.nativeEvent.pageX, y: event.nativeEvent.pageY };
+              }}
+              onTouchEnd={event => finishPageSwipe(event.nativeEvent.pageX, event.nativeEvent.pageY)}
+              onTouchCancel={() => { pageTouchStart.current = null; }}
+              style={{ maxHeight: windowHeight * (ridePage === 'map' ? 0.45 : 0.65) }}
+              showsVerticalScrollIndicator={false}
+            >
+              <View>
+                {ridePage === 'map' ? <>
+            <View style={styles.primaryMetrics}>
+              <View style={styles.mapSpeedCell}>
+                <Text style={styles.instrumentLabel}>Kecepatan</Text>
+                <View style={styles.speedColumn}>
+                  <View style={styles.speedBlock}>
+                    <Text style={styles.primaryValue}>{formatSpeed(currentSpeed)}</Text>
+                    <Text style={styles.speedUnit}>km/j</Text>
+                  </View>
+                  <Text
+                    numberOfLines={1}
+                    testID="ride-average-speed"
+                    style={styles.averageSpeedLabel}
+                  >
+                    {averageSpeedLabel}
+                  </Text>
+                </View>
+              </View>
+              <Metric label="Jarak" value={formatDistance(ride.distanceMeters)} />
+            </View>
+            <View style={styles.secondaryMetrics}>
+              <Metric label="Waktu total" value={formatDuration(elapsedSeconds)} />
+              <Metric label="Total naik" value={ride.elevationDataAvailable === false || ride.ascentMeters == null ? '— m' : `${Math.round(ride.ascentMeters)} m`} />
+            </View>
+            <View style={styles.mapSecondaryReadings}>
+              <View style={styles.mapReadingCell}>
+                <Text style={styles.mapReadingLabel}>Gradien</Text>
+                <Text
+                  testID="ride-live-grade"
+                  style={[styles.mapReadingValue, { color: getGradeColor(displayedGrade) }]}
+                  adjustsFontSizeToFit
+                  numberOfLines={1}
+                >
+                  {formatGradePercent(displayedGrade)}
+                </Text>
+                <Text style={styles.mapReadingHint}>
+                  {currentGradeSource
+                    ? `${getShortGradeLabel(currentGrade)} · ${currentGradeSource === 'barometer' ? 'barometer' : 'GPS'}`
+                    : 'Mengukur gradien'}
+                </Text>
+              </View>
+              <View style={styles.mapReadingCell}>
+                <Text style={styles.mapReadingLabel}>Elevasi</Text>
+                <Text style={styles.mapReadingValue} adjustsFontSizeToFit numberOfLines={1}>
+                  {ride.elevationMeters == null
+                    ? '—'
+                    : `${Math.round(ride.elevationMeters).toLocaleString('id-ID')} m`}
+                </Text>
+                <Text style={styles.mapReadingHint}>
+                  {ride.elevationSource === 'barometer_gps'
+                    ? 'Absolut · barometer'
+                    : ride.elevationSource === 'gps' ? 'GPS' : 'Belum tersedia'}
+                </Text>
+                {ride.relativeElevationMeters == null ? null : (
+                  <Text testID="ride-relative-elevation" style={styles.relativeElevationLabel}>
+                    Baro Δ {formatSignedElevationMeters(ride.relativeElevationMeters)} m
+                  </Text>
+                )}
+              </View>
+            </View>
         {ride.watchHeartRateEnabled ? (
           <View style={styles.heartRateRow}>
             <Text testID="ride-heart-rate" style={styles.heartRateValue}>{displayedHeartRate ?? '—'} <Text style={styles.metricLabel}>bpm</Text></Text>
@@ -486,6 +551,14 @@ export function RideDashboard({
                     ? 'Menunggu HR jam' : 'Menyambungkan HR jam…'
               )}
             </Text>
+          </View>
+        ) : null}
+        {ride.virtualPowerMassKg != null && ride.virtualPowerMassKg > 0 ? (
+          <View style={styles.heartRateRow}>
+            <Text testID="ride-map-power" style={styles.heartRateValue}>
+              {displayedPower == null ? '—' : Math.round(displayedPower)} <Text style={styles.metricLabel}>W</Text>
+            </Text>
+            <Text style={styles.heartRateStatus}>Power · estimasi</Text>
           </View>
         ) : null}
         {onToggleAutoPause ? (
@@ -499,14 +572,6 @@ export function RideDashboard({
             />
           </View>
         ) : null}
-        <View style={styles.secondaryMetrics}>
-          <Metric label="Jarak" value={formatDistance(ride.distanceMeters)} />
-          <Metric
-            label="Total naik"
-            value={ride.elevationDataAvailable === false ? '— m' : `${Math.round(ride.ascentMeters ?? 0)} m`}
-          />
-          <Metric label="Waktu total" value={formatDuration(elapsedSeconds)} />
-        </View>
         {expanded ? (
           <View style={styles.expandedMetrics}>
             <Metric compact label="Bergerak" value={formatDuration(ride.movingSeconds)} />
@@ -514,7 +579,7 @@ export function RideDashboard({
             <Metric
               compact
               label="Total turun"
-              value={ride.elevationDataAvailable === false ? '— m' : `${Math.round(ride.descentMeters ?? 0)} m`}
+              value={ride.elevationDataAvailable === false || ride.descentMeters == null ? '— m' : `${Math.round(ride.descentMeters)} m`}
             />
             <Metric
               compact
@@ -543,11 +608,86 @@ export function RideDashboard({
         ) : !following ? (
           <Text style={styles.hintText}>Peta digeser. Ketuk Pusatkan agar kembali mengikuti titik biru.</Text>
         ) : null}
-        {error ? (
-          <Text accessibilityLiveRegion="assertive" style={styles.errorText}>
-            {error}
-          </Text>
-        ) : null}
+                </> : ridePage === 'data' ? (
+                  <View testID="ride-data-page" style={styles.instrumentPage}>
+                    <Text style={styles.instrumentLabel}>Kecepatan</Text>
+                    <Text style={styles.instrumentSpeed} adjustsFontSizeToFit numberOfLines={1}>
+                      {formatSpeed(currentSpeed)} <Text style={styles.instrumentUnit}>km/j</Text>
+                    </Text>
+                    <Text style={styles.instrumentHint}>{averageSpeedLabel}</Text>
+                    <View style={styles.instrumentGrid}>
+                      <InstrumentMetric label="Jarak" value={formatDistance(ride.distanceMeters)} />
+                      <InstrumentMetric label="Waktu total" value={formatDuration(elapsedSeconds)} />
+                      <InstrumentMetric label="Total naik" value={ride.elevationDataAvailable === false || ride.ascentMeters == null ? '—' : `${Math.round(ride.ascentMeters)} m`} />
+                      <InstrumentMetric label="HR · Watch 5" value={displayedHeartRate == null ? '—' : `${displayedHeartRate} bpm`} />
+                      {ride.virtualPowerMassKg != null ? (
+                        <InstrumentMetric label="Power · estimasi" value={displayedPower == null ? '—' : `${Math.round(displayedPower)} W`} />
+                      ) : null}
+                      <InstrumentMetric label="Elevasi" value={ride.elevationMeters == null ? '—' : `${Math.round(ride.elevationMeters)} m`} />
+                      <InstrumentMetric label="Gradien" value={formatGradePercent(displayedGrade)} />
+                      <InstrumentMetric label="Bergerak" value={formatDuration(ride.movingSeconds)} />
+                      <InstrumentMetric label="Total turun" value={ride.elevationDataAvailable === false || ride.descentMeters == null ? '—' : `${Math.round(ride.descentMeters)} m`} />
+                    </View>
+                    <Text style={styles.instrumentHint}>{getElevationSourceLabel(ride)} · GPS {ride.horizontalAccuracyMeters == null ? 'menunggu' : `±${Math.round(ride.horizontalAccuracyMeters)} m`}</Text>
+                  </View>
+                ) : (
+                  <View testID="ride-climb-page" style={styles.instrumentPage}>
+                    {climbAlert && climbAlert.type !== 'none' ? <>
+                      <Text style={styles.instrumentLabel}>{`Tanjakan ${climbAlert.climbIndex} dari ${climbAlert.totalClimbs}`}</Text>
+                      <Text style={styles.instrumentSpeed}>{formatGradePercent(climbAlert.climb.averageGradePercent)}</Text>
+                      <Text style={styles.instrumentHint}>Gradien rata-rata</Text>
+                      {climbProfileSamples.length >= 2 ? (
+                        <ElevationProfileChart
+                          samples={climbProfileSamples}
+                          height={90}
+                          showLabels={false}
+                          riderProgressPercent={climbAlert.type === 'active' ? climbAlert.progressPercent : null}
+                        />
+                      ) : (
+                        <Text style={styles.instrumentHint}>Profil elevasi belum tersedia.</Text>
+                      )}
+                      <View style={styles.instrumentGrid}>
+                        <InstrumentMetric label={climbAlert.type === 'active' ? 'Sisa' : 'Mulai dalam'} value={formatTerrainDistance(climbAlert.type === 'active' ? climbAlert.distanceRemainingMeters : climbAlert.distanceToStartMeters)} />
+                        <InstrumentMetric label="Panjang" value={formatTerrainDistance(climbAlert.climb.distanceMeters)} />
+                        <InstrumentMetric
+                          label={climbAlert.type === 'active' ? 'Sisa naik' : 'Naik'}
+                          value={climbAlert.type === 'active'
+                            ? (climbAlert.gainRemainingMeters == null ? '—' : `+${Math.round(climbAlert.gainRemainingMeters)} m`)
+                            : `+${Math.round(climbAlert.climb.elevationGainMeters)} m`}
+                        />
+                        <InstrumentMetric label="Maksimum" value={formatGradePercent(climbAlert.climb.maxGradePercent)} />
+                      </View>
+                    </> : showsOfflineTerrainClimb ? <>
+                      <Text style={styles.instrumentLabel}>{ride.terrainClimbStatus === 'active' ? 'Tanjakan aktif' : 'Tanjakan di depan'}</Text>
+                      <Text style={styles.instrumentSpeed}>{formatGradePercent(ride.terrainClimbAverageGradePercent ?? null)}</Text>
+                      <Text style={styles.instrumentHint}>Gradien rata-rata · medan offline</Text>
+                      <View style={styles.instrumentGrid}>
+                        <InstrumentMetric label={ride.terrainClimbStatus === 'active' ? 'Sisa' : 'Mulai dalam'} value={ride.terrainClimbStatus === 'active' ? (ride.terrainClimbDistanceRemainingMeters == null ? '—' : formatTerrainDistance(ride.terrainClimbDistanceRemainingMeters)) : (ride.terrainClimbDistanceToStartMeters == null ? '—' : formatTerrainDistance(ride.terrainClimbDistanceToStartMeters))} />
+                        <InstrumentMetric label="Naik" value={ride.terrainClimbElevationGainMeters == null ? '—' : `+${Math.round(ride.terrainClimbElevationGainMeters)} m`} />
+                      </View>
+                    </> : <>
+                      <Text style={styles.instrumentLabel}>Tanjakan</Text>
+                      <Text style={styles.instrumentEmpty}>{climbAlert && climbAlert.totalClimbs > 0 ? 'Tidak ada tanjakan aktif' : 'Belum ada tanjakan tersedia'}</Text>
+                      <Text style={styles.instrumentHint}>
+                        {climbAlert && climbAlert.totalClimbs > 0
+                          ? 'Peringatan akan muncul saat mendekati tanjakan.'
+                          : 'Profil akan muncul saat data rute atau medan tersedia.'}
+                      </Text>
+                    </>}
+                    {((climbAlert && climbAlert.type !== 'none') || showsOfflineTerrainClimb) &&
+                    (ride.watchHeartRateEnabled || (ride.virtualPowerMassKg != null && ride.virtualPowerMassKg > 0)) ? (
+                      <View style={styles.instrumentGrid}>
+                        {ride.watchHeartRateEnabled ? <InstrumentMetric label="HR · Watch 5" value={displayedHeartRate == null ? '—' : `${displayedHeartRate} bpm`} /> : null}
+                        {ride.virtualPowerMassKg != null && ride.virtualPowerMassKg > 0 ? <InstrumentMetric label="Power · estimasi" value={displayedPower == null ? '—' : `${Math.round(displayedPower)} W`} /> : null}
+                      </View>
+                    ) : null}
+                  </View>
+                )}
+              </View>
+            </ScrollView>
+            {error ? (
+              <Text accessibilityLiveRegion="assertive" style={styles.errorText}>{error}</Text>
+            ) : null}
             <View style={styles.actionRow}>
               {rideIsRecording ? (
                 <DashboardButton
@@ -575,6 +715,15 @@ export function RideDashboard({
           </>
         )}
       </View>
+    </View>
+  );
+}
+
+function InstrumentMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.instrumentMetric}>
+      <Text style={styles.instrumentLabel}>{label}</Text>
+      <Text style={styles.instrumentMetricValue} adjustsFontSizeToFit numberOfLines={1}>{value}</Text>
     </View>
   );
 }
@@ -696,6 +845,20 @@ function formatDuration(seconds = 0) {
 }
 
 const styles = StyleSheet.create({
+  pageTabs: { flexDirection: 'row', gap: 6, marginTop: 10, marginBottom: 4 },
+  pageTab: { flex: 1, minHeight: 48, alignItems: 'center', justifyContent: 'center', borderBottomWidth: 2, borderBottomColor: AmoledTheme.borderDefault },
+  pageTabSelected: { borderBottomColor: AmoledTheme.accentOrange },
+  pageTabLabel: { color: AmoledTheme.textSecondary, fontSize: 15, fontWeight: '700' },
+  pageTabLabelSelected: { color: AmoledTheme.textPrimary },
+  instrumentPage: { paddingVertical: 14 },
+  instrumentLabel: { color: AmoledTheme.textSecondary, fontSize: 15, fontWeight: '600' },
+  instrumentSpeed: { color: AmoledTheme.textPrimary, fontSize: 64, fontWeight: '800', fontVariant: ['tabular-nums'], letterSpacing: -1 },
+  instrumentUnit: { color: AmoledTheme.textSecondary, fontSize: 18, fontWeight: '600' },
+  instrumentHint: { color: AmoledTheme.textSecondary, fontSize: 14, lineHeight: 20, marginTop: 6 },
+  instrumentEmpty: { color: AmoledTheme.textPrimary, fontSize: 24, fontWeight: '700', marginTop: 12 },
+  instrumentGrid: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 12, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: AmoledTheme.borderDefault },
+  instrumentMetric: { width: '50%', minHeight: 82, paddingVertical: 8, paddingRight: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: AmoledTheme.borderDefault },
+  instrumentMetricValue: { color: AmoledTheme.textPrimary, fontSize: 27, fontWeight: '700', fontVariant: ['tabular-nums'] },
   terrainClimbAlert: {
     backgroundColor: 'rgba(245, 158, 11, 0.10)',
     borderColor: 'rgba(245, 158, 11, 0.55)',
@@ -714,24 +877,24 @@ const styles = StyleSheet.create({
   terrainClimbTitle: {
     color: AmoledTheme.accentYellow,
     flex: 1,
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '800',
   },
   terrainClimbDistance: {
     color: AmoledTheme.textPrimary,
-    fontSize: 12,
+    fontSize: 14,
     fontVariant: ['tabular-nums'],
     fontWeight: '700',
   },
   terrainClimbMetrics: {
     color: AmoledTheme.textPrimary,
-    fontSize: 12,
+    fontSize: 14,
     fontVariant: ['tabular-nums'],
     fontWeight: '600',
   },
   terrainClimbSource: {
     color: AmoledTheme.textSecondary,
-    fontSize: 10,
+    fontSize: 14,
   },
   autoPauseRow: {
     alignItems: 'center',
@@ -810,6 +973,9 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.5,
     shadowRadius: 16,
   },
+  instrumentCard: {
+    flex: 1,
+  },
   handleTouchArea: {
     alignItems: 'center',
     justifyContent: 'center',
@@ -851,7 +1017,7 @@ const styles = StyleSheet.create({
   },
   statusText: {
     color: AmoledTheme.textPrimary,
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '700',
     letterSpacing: -0.2,
     minWidth: 0,
@@ -872,10 +1038,52 @@ const styles = StyleSheet.create({
     maxWidth: 124,
   },
   primaryMetrics: {
-    alignItems: 'flex-end',
+    alignItems: 'stretch',
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    gap: 8,
     marginTop: 8,
+  },
+  mapSpeedCell: {
+    backgroundColor: AmoledTheme.surfaceElevated,
+    borderColor: AmoledTheme.borderSubtle,
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    flex: 1,
+    minWidth: 0,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  mapSecondaryReadings: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 8,
+  },
+  mapReadingCell: {
+    backgroundColor: AmoledTheme.surfaceElevated,
+    borderColor: AmoledTheme.borderSubtle,
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    flex: 1,
+    minWidth: 0,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  mapReadingLabel: {
+    color: AmoledTheme.textSecondary,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  mapReadingValue: {
+    color: AmoledTheme.textPrimary,
+    fontSize: 24,
+    fontVariant: ['tabular-nums'],
+    fontWeight: '700',
+  },
+  mapReadingHint: {
+    color: AmoledTheme.textSecondary,
+    fontSize: 12,
+    lineHeight: 16,
+    marginTop: 2,
   },
   speedColumn: {
     alignItems: 'flex-start',
@@ -897,24 +1105,16 @@ const styles = StyleSheet.create({
   },
   speedUnit: {
     color: AmoledTheme.textSecondary,
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '600',
     textTransform: 'uppercase',
   },
   averageSpeedLabel: {
     color: AmoledTheme.accentOrange,
-    fontSize: 11,
+    fontSize: 13,
     fontVariant: ['tabular-nums'],
     fontWeight: '600',
     marginTop: -2,
-  },
-  gradeBlock: {
-    alignItems: 'center',
-    flex: 1,
-    justifyContent: 'flex-end',
-    marginHorizontal: 8,
-    minWidth: 0,
-    paddingBottom: 4,
   },
   gradePill: {
     alignItems: 'center',
@@ -931,26 +1131,6 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: -0.3,
   },
-  gradeLabel: {
-    color: AmoledTheme.textSecondary,
-    fontSize: 11,
-    fontWeight: '600',
-    marginTop: 2,
-    textAlign: 'center',
-  },
-  elevationBlock: {
-    alignItems: 'flex-end',
-    flexShrink: 0,
-    maxWidth: 106,
-    minWidth: 68,
-  },
-  elevationValue: {
-    color: AmoledTheme.textPrimary,
-    fontSize: 28,
-    fontVariant: ['tabular-nums'],
-    fontWeight: '700',
-    letterSpacing: -0.5,
-  },
   relativeElevationLabel: {
     color: AmoledTheme.accentOrange,
     fontSize: 10,
@@ -965,9 +1145,10 @@ const styles = StyleSheet.create({
   },
   secondaryMetrics: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 8,
     justifyContent: 'space-between',
-    marginTop: 12,
+    marginTop: 8,
   },
   expandedMetrics: {
     borderColor: AmoledTheme.divider,
@@ -982,10 +1163,11 @@ const styles = StyleSheet.create({
   metric: {
     backgroundColor: AmoledTheme.surfaceElevated,
     borderColor: AmoledTheme.borderSubtle,
-    borderRadius: 14,
+    borderRadius: 8,
     borderWidth: StyleSheet.hairlineWidth,
     flex: 1,
     minWidth: 0,
+    minHeight: 72,
     paddingHorizontal: 12,
     paddingVertical: 10,
   },
@@ -997,7 +1179,7 @@ const styles = StyleSheet.create({
   },
   metricValue: {
     color: AmoledTheme.textPrimary,
-    fontSize: 16,
+    fontSize: 24,
     fontVariant: ['tabular-nums'],
     fontWeight: '700',
   },
@@ -1034,8 +1216,8 @@ const styles = StyleSheet.create({
     borderColor: 'transparent',
     borderWidth: 0,
     flex: 0,
-    minHeight: 38,
-    minWidth: 38,
+    minHeight: 48,
+    minWidth: 48,
   },
   compactButton: {
     flex: 0,
@@ -1078,59 +1260,44 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flex: 1,
     flexDirection: 'row',
-    gap: 6,
+    gap: 8,
   },
   minimizedSpeedColumn: {
     alignItems: 'flex-start',
-    flexShrink: 1,
+    flex: 1,
     minWidth: 0,
-  },
-  minimizedSpeedBlock: {
-    alignItems: 'baseline',
-    flexDirection: 'row',
-    gap: 2,
   },
   minimizedSpeedValue: {
     color: AmoledTheme.textPrimary,
-    fontSize: 22,
+    fontSize: 24,
     fontVariant: ['tabular-nums'],
     fontWeight: '800',
   },
   minimizedSpeedUnit: {
     color: AmoledTheme.textSecondary,
-    fontSize: 10,
+    fontSize: 12,
     fontWeight: '600',
   },
-  minimizedAverageSpeed: {
-    color: AmoledTheme.accentOrange,
-    fontSize: 9,
-    fontVariant: ['tabular-nums'],
-    fontWeight: '600',
-    maxWidth: 96,
-  },
-  minimizedGradePill: {
-    borderRadius: 6,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-  },
-  minimizedDivider: {
-    backgroundColor: AmoledTheme.divider,
-    height: 18,
-    width: StyleSheet.hairlineWidth,
+  minimizedDetails: {
+    flexDirection: 'row',
+    gap: 6,
+    marginTop: 10,
   },
   minimizedMetricItem: {
     alignItems: 'flex-start',
+    flex: 1,
+    minWidth: 0,
   },
   minimizedMetricValue: {
     color: AmoledTheme.textPrimary,
-    fontSize: 13,
+    fontSize: 14,
     fontVariant: ['tabular-nums'],
     fontWeight: '700',
   },
   minimizedMetricLabel: {
     color: AmoledTheme.textSecondary,
-    fontSize: 9,
-    fontWeight: '500',
+    fontSize: 10,
+    fontWeight: '600',
   },
   minimizedActions: {
     alignItems: 'center',
@@ -1144,9 +1311,9 @@ const styles = StyleSheet.create({
     borderColor: AmoledTheme.borderDefault,
     borderRadius: 10,
     borderWidth: StyleSheet.hairlineWidth,
-    height: 34,
+    height: 48,
     justifyContent: 'center',
-    width: 34,
+    width: 48,
   },
   minimizedActionBtnPressed: {
     opacity: 0.6,

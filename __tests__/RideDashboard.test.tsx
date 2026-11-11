@@ -3,6 +3,7 @@ import ReactTestRenderer from 'react-test-renderer';
 
 import { RideDashboard } from '../src/features/ride/RideDashboard';
 import type { RideSnapshot } from '../src/features/ride/useRideTracking';
+import type { ClimbAlertState } from '../src/domain/routes/elevation/routeElevationAnalysis';
 
 jest.mock('react-native-safe-area-context', () => {
   const { View } = jest.requireActual('react-native');
@@ -24,6 +25,96 @@ const activeRide: RideSnapshot = {
   lastFixAt: new Date().toISOString(),
   pointCount: 50,
 };
+
+test('switches ride pages while keeping recording controls and errors visible', async () => {
+  const onPause = jest.fn();
+  let renderer: ReactTestRenderer.ReactTestRenderer;
+  await ReactTestRenderer.act(() => {
+    renderer = ReactTestRenderer.create(
+      <RideDashboard
+        ride={activeRide}
+        busy={false}
+        error="Masalah penyimpanan"
+        following
+        onRecenter={jest.fn()}
+        onZoomIn={jest.fn()}
+        onZoomOut={jest.fn()}
+        onPause={onPause}
+        onResume={jest.fn()}
+        onFinish={jest.fn()}
+      />,
+    );
+  });
+
+  await ReactTestRenderer.act(() => {
+    renderer!.root.findByProps({ accessibilityLabel: 'Halaman Data' }).props.onPress();
+  });
+  expect(renderer!.root.findByProps({ testID: 'ride-data-page' })).toBeTruthy();
+  expect(renderer!.root.findByProps({ children: 'Masalah penyimpanan' })).toBeTruthy();
+  await ReactTestRenderer.act(() => {
+    renderer!.root.findByProps({ accessibilityLabel: 'Jeda' }).props.onPress();
+    renderer!.root.findByProps({ accessibilityLabel: 'Halaman Tanjakan' }).props.onPress();
+  });
+  expect(onPause).toHaveBeenCalledTimes(1);
+  expect(renderer!.root.findByProps({ testID: 'ride-climb-page' })).toBeTruthy();
+  expect(renderer!.root.findByProps({ children: 'Belum ada tanjakan tersedia' })).toBeTruthy();
+  expect(renderer!.root.findByProps({ accessibilityLabel: 'Selesai' })).toBeTruthy();
+  await ReactTestRenderer.act(() => renderer!.unmount());
+});
+
+test('shows estimated power only while the GPS sample is fresh', async () => {
+  let renderer: ReactTestRenderer.ReactTestRenderer;
+  const controls = { onRecenter: jest.fn(), onZoomIn: jest.fn(), onZoomOut: jest.fn(), onPause: jest.fn(), onResume: jest.fn(), onFinish: jest.fn() };
+  const ride = { ...activeRide, lastFixAt: new Date().toISOString(), virtualPowerMassKg: 85, virtualPowerWatts: 151.7 };
+  await ReactTestRenderer.act(() => {
+    renderer = ReactTestRenderer.create(<RideDashboard ride={ride} busy={false} error={null} following {...controls} />);
+  });
+  await ReactTestRenderer.act(() => { renderer!.root.findByProps({ accessibilityLabel: 'Halaman Data' }).props.onPress(); });
+  expect(renderer!.root.findByProps({ label: 'Power · estimasi' }).props.value).toBe('152 W');
+  await ReactTestRenderer.act(() => { renderer!.root.findByProps({ accessibilityLabel: 'Halaman Peta' }).props.onPress(); });
+  expect(renderer!.root.findByProps({ testID: 'ride-map-power' }).props.children[0]).toBe(152);
+  await ReactTestRenderer.act(() => {
+    renderer!.update(<RideDashboard ride={{ ...ride, lastFixAt: new Date(Date.now() - 120_000).toISOString() }} busy={false} error={null} following {...controls} />);
+  });
+  expect(renderer!.root.findByProps({ testID: 'ride-map-power' }).props.children[0]).toBe('—');
+  await ReactTestRenderer.act(() => { renderer!.root.findByProps({ accessibilityLabel: 'Halaman Data' }).props.onPress(); });
+  expect(renderer!.root.findByProps({ label: 'Power · estimasi' }).props.value).toBe('—');
+  await ReactTestRenderer.act(() => renderer!.unmount());
+});
+
+test('keeps heart rate and estimated power visible alongside a terrain climb', async () => {
+  let renderer: ReactTestRenderer.ReactTestRenderer;
+  await ReactTestRenderer.act(() => {
+    renderer = ReactTestRenderer.create(<RideDashboard ride={{ ...activeRide, lastFixAt: new Date().toISOString(), terrainClimbStatus: 'upcoming', terrainClimbDistanceToStartMeters: 150, virtualPowerMassKg: 85, virtualPowerWatts: 180, watchHeartRateEnabled: true, heartRateBpm: 143, heartRateRecordedAt: new Date().toISOString() }} busy={false} error={null} following onRecenter={jest.fn()} onZoomIn={jest.fn()} onZoomOut={jest.fn()} onPause={jest.fn()} onResume={jest.fn()} onFinish={jest.fn()} />);
+  });
+  await ReactTestRenderer.act(() => { renderer!.root.findByProps({ accessibilityLabel: 'Halaman Tanjakan' }).props.onPress(); });
+  expect(renderer!.root.findByProps({ label: 'Power · estimasi' }).props.value).toBe('180 W');
+  expect(renderer!.root.findByProps({ label: 'HR · Watch 5' }).props.value).toBe('143 bpm');
+  await ReactTestRenderer.act(() => renderer!.unmount());
+});
+
+test('moves from map to data after a horizontal swipe', async () => {
+  let renderer: ReactTestRenderer.ReactTestRenderer;
+  await ReactTestRenderer.act(() => {
+    renderer = ReactTestRenderer.create(
+      <RideDashboard ride={activeRide} busy={false} error={null} following
+        onRecenter={jest.fn()} onZoomIn={jest.fn()} onZoomOut={jest.fn()}
+        onPause={jest.fn()} onResume={jest.fn()} onFinish={jest.fn()} />,
+    );
+  });
+  const swipeArea = renderer!.root.findByProps({ testID: 'ride-page-swipe' });
+  await ReactTestRenderer.act(() => {
+    swipeArea.props.onTouchStart({ nativeEvent: { pageX: 180, pageY: 100 } });
+    swipeArea.props.onTouchEnd({ nativeEvent: { pageX: 130, pageY: 240 } });
+  });
+  expect(renderer!.root.findAllByProps({ testID: 'ride-data-page' })).toHaveLength(0);
+  await ReactTestRenderer.act(() => {
+    swipeArea.props.onTouchStart({ nativeEvent: { pageX: 180, pageY: 100 } });
+    swipeArea.props.onTouchEnd({ nativeEvent: { pageX: 40, pageY: 102 } });
+  });
+  expect(renderer!.root.findByProps({ testID: 'ride-data-page' })).toBeTruthy();
+  await ReactTestRenderer.act(() => renderer!.unmount());
+});
 
 test('shows recorded ride metrics and working ride controls', async () => {
   const onPause = jest.fn();
@@ -51,7 +142,7 @@ test('shows recorded ride metrics and working ride controls', async () => {
   expect(renderer!.root.findByProps({ children: '18,0' })).toBeTruthy();
   expect(renderer!.root.findByProps({ testID: 'ride-average-speed' }).props.children)
     .toBe('Rata-rata 6,0 km/j');
-  expect(renderer!.root.findByProps({ children: '412' })).toBeTruthy();
+  expect(renderer!.root.findByProps({ children: '412 m' })).toBeTruthy();
   expect(renderer!.root.findByProps({ children: '2,5 km' })).toBeTruthy();
 
   await ReactTestRenderer.act(() => {
@@ -93,7 +184,7 @@ test('distinguishes relative barometer readings and barometer errors from GPS al
     renderer = ReactTestRenderer.create(<RideDashboard {...dashboardProps} />);
   });
   expect(renderer!.root.findByProps({ children: 'GPS absolut · baro relatif' })).toBeTruthy();
-  expect(renderer!.root.findByProps({ children: 'elevasi GPS (m)' })).toBeTruthy();
+  expect(renderer!.root.findByProps({ children: 'GPS' })).toBeTruthy();
   expect(renderer!.root.findByProps({ testID: 'ride-relative-elevation' }).props.children.join('')).toBe('Baro Δ +2,4 m');
 
   await ReactTestRenderer.act(() => {
@@ -218,8 +309,45 @@ test('shows no average speed until both distance and moving time are available',
     renderer!.root.findByProps({ accessibilityLabel: 'Perkecil panel perjalanan' }).props.onPress();
   });
   expect(renderer!.root.findByProps({ testID: 'ride-average-speed' }).props.children)
-    .toContain('Rata-rata —');
+    .toBe('—');
+  expect(renderer!.root.findByProps({ testID: 'ride-average-speed' }).props.accessibilityLabel)
+    .toBe('Rata-rata —');
   await ReactTestRenderer.act(() => renderer!.unmount());
+});
+
+test('keeps speed on one line and only shows a fresh heart rate in the minimized panel', async () => {
+  jest.useFakeTimers();
+  let renderer: ReactTestRenderer.ReactTestRenderer;
+  const ride = { ...activeRide, lastFixAt: new Date().toISOString(), watchHeartRateEnabled: true, heartRateBpm: 143, heartRateRecordedAt: new Date().toISOString() };
+  const controls = { onRecenter: jest.fn(), onZoomIn: jest.fn(), onZoomOut: jest.fn(), onPause: jest.fn(), onResume: jest.fn(), onFinish: jest.fn() };
+  await ReactTestRenderer.act(() => { renderer = ReactTestRenderer.create(<RideDashboard ride={ride} busy={false} error={null} following {...controls} />); });
+  await ReactTestRenderer.act(() => { renderer!.root.findByProps({ accessibilityLabel: 'Perkecil panel perjalanan' }).props.onPress(); });
+  expect(renderer!.root.findByProps({ testID: 'minimized-speed' }).props.numberOfLines).toBe(1);
+  expect(renderer!.root.findByProps({ testID: 'minimized-speed' }).props.children[0]).toBe('18,0');
+  expect(renderer!.root.findByProps({ testID: 'minimized-heart-rate' }).props.children[0]).toBe(143);
+  expect(renderer!.root.findByProps({ accessibilityLabel: 'Jeda' })).toBeTruthy();
+  await ReactTestRenderer.act(() => { jest.advanceTimersByTime(16000); });
+  expect(renderer!.root.findByProps({ testID: 'minimized-heart-rate' }).props.children[0]).toBe('—');
+  expect(renderer!.root.findByProps({ accessibilityLabel: 'Heart rate tidak tersedia' })).toBeTruthy();
+  await ReactTestRenderer.act(() => {
+    renderer!.update(<RideDashboard ride={{ ...ride, autoPaused: true, heartRateRecordedAt: new Date().toISOString() }} busy={false} error={null} following {...controls} />);
+  });
+  expect(renderer!.root.findByProps({ accessibilityLabel: 'Heart rate dijeda' })).toBeTruthy();
+  expect(renderer!.root.findByProps({ testID: 'minimized-heart-rate' }).props.children[0]).toBe('—');
+  await ReactTestRenderer.act(() => {
+    renderer!.update(<RideDashboard ride={{ ...ride, status: 'paused' }} busy={false} error={null} following {...controls} />);
+  });
+  expect(renderer!.root.findByProps({ accessibilityLabel: 'Heart rate dijeda' })).toBeTruthy();
+  await ReactTestRenderer.act(() => {
+    renderer!.update(<RideDashboard ride={{ ...ride, watchHeartRateEnabled: false }} busy={false} error={null} following {...controls} />);
+  });
+  expect(renderer!.root.findByProps({ accessibilityLabel: 'Heart rate tidak aktif' })).toBeTruthy();
+  await ReactTestRenderer.act(() => {
+    renderer!.update(<RideDashboard ride={{ ...ride, watchHeartRateStatus: 'disconnected', heartRateBpm: null, heartRateRecordedAt: null }} busy={false} error={null} following {...controls} />);
+  });
+  expect(renderer!.root.findByProps({ children: 'HR TERPUTUS' })).toBeTruthy();
+  await ReactTestRenderer.act(() => renderer!.unmount());
+  jest.useRealTimers();
 });
 
 test('stops the dashboard clock while covered and restores the expanded panel on return', async () => {
@@ -340,6 +468,12 @@ test('shows offline free-ride climb guidance and suppresses it while paused or r
   expect(renderer!.root.findByProps({ children: 'Tanjakan di depan' })).toBeTruthy();
   expect(renderer!.root.findByProps({ children: '450 m lagi' })).toBeTruthy();
   expect(renderer!.root.findByProps({ children: 'Profil medan offline lengkap' })).toBeTruthy();
+  for (const page of ['Data', 'Tanjakan', 'Peta']) {
+    await ReactTestRenderer.act(() => {
+      renderer!.root.findByProps({ accessibilityLabel: `Halaman ${page}` }).props.onPress();
+    });
+    expect(renderer!.root.findByProps({ testID: 'offline-terrain-climb-alert' })).toBeTruthy();
+  }
 
   await ReactTestRenderer.act(() => {
     renderer!.root.findByProps({ accessibilityLabel: 'Perkecil panel perjalanan' }).props.onPress();
@@ -527,3 +661,65 @@ test('holds speed across transient GPS gaps and drops to dash only after stale G
   await ReactTestRenderer.act(() => renderer!.unmount());
 });
 
+test('keeps speed and HR visible when a fresh snapshot arrives between clock ticks', async () => {
+  jest.useFakeTimers();
+  const initialTime = Date.now();
+  const controls = { onRecenter: jest.fn(), onZoomIn: jest.fn(), onZoomOut: jest.fn(), onPause: jest.fn(), onResume: jest.fn(), onFinish: jest.fn() };
+  let renderer: ReactTestRenderer.ReactTestRenderer;
+  const initialRide = { ...activeRide, lastFixAt: new Date(initialTime).toISOString(), watchHeartRateEnabled: true, heartRateBpm: 140, heartRateRecordedAt: new Date(initialTime).toISOString() };
+  await ReactTestRenderer.act(() => {
+    renderer = ReactTestRenderer.create(<RideDashboard ride={initialRide} busy={false} error={null} following {...controls} />);
+  });
+  await ReactTestRenderer.act(() => { renderer!.root.findByProps({ accessibilityLabel: 'Perkecil panel perjalanan' }).props.onPress(); });
+  jest.setSystemTime(initialTime + 500);
+  const nextTimestamp = new Date(initialTime + 500).toISOString();
+  await ReactTestRenderer.act(() => {
+    renderer!.update(<RideDashboard ride={{ ...initialRide, speedMetersPerSecond: 6.5, lastFixAt: nextTimestamp, heartRateBpm: 143, heartRateRecordedAt: nextTimestamp }} busy={false} error={null} following {...controls} />);
+  });
+  expect(renderer!.root.findByProps({ testID: 'minimized-speed' }).props.children[0]).toBe('23,4');
+  expect(renderer!.root.findByProps({ testID: 'minimized-heart-rate' }).props.children[0]).toBe(143);
+  await ReactTestRenderer.act(() => { jest.advanceTimersByTime(11_000); });
+  expect(renderer!.root.findByProps({ testID: 'minimized-speed' }).props.children[0]).toBe('—');
+  await ReactTestRenderer.act(() => renderer!.unmount());
+  jest.useRealTimers();
+});
+
+
+
+test('shows automatic pause as a pause while the recording session stays active', async () => {
+  let screen!: ReactTestRenderer.ReactTestRenderer;
+  await ReactTestRenderer.act(() => {
+    screen = ReactTestRenderer.create(
+      <RideDashboard ride={{ ...activeRide, status: 'active', autoPaused: true }} busy={false} error={null} following onRecenter={jest.fn()} onZoomIn={jest.fn()} onZoomOut={jest.fn()} onPause={jest.fn()} onResume={jest.fn()} onFinish={jest.fn()} />,
+    );
+  });
+  expect(screen.root.findByProps({ children: 'Jeda otomatis · menunggu gerak' })).toBeTruthy();
+  await ReactTestRenderer.act(() => screen.unmount());
+});
+
+
+test('shows remaining ascent for an active climb and a dash when it is unavailable', async () => {
+  const climbAlert: ClimbAlertState = {
+    type: 'active', climbIndex: 1, totalClimbs: 1, distanceRemainingMeters: 400,
+    gainRemainingMeters: 35, progressPercent: 50, currentGradePercent: 6,
+    currentElevationMeters: 150,
+    climb: { id: 1, startDistanceMeters: 0, endDistanceMeters: 800, distanceMeters: 800,
+      elevationGainMeters: 70, averageGradePercent: 8, maxGradePercent: 12,
+      startElevationMeters: 100, endElevationMeters: 170,
+      startCoordinate: [115.2, -8.6], endCoordinate: [115.21, -8.61] },
+  };
+  let screen!: ReactTestRenderer.ReactTestRenderer;
+  const renderDashboard = (alert: ClimbAlertState) => (
+    <RideDashboard ride={activeRide} busy={false} error={null} following climbAlert={alert}
+      onRecenter={jest.fn()} onZoomIn={jest.fn()} onZoomOut={jest.fn()}
+      onPause={jest.fn()} onResume={jest.fn()} onFinish={jest.fn()} />
+  );
+  await ReactTestRenderer.act(() => { screen = ReactTestRenderer.create(renderDashboard(climbAlert)); });
+  await ReactTestRenderer.act(() => screen.root.findByProps({ accessibilityLabel: 'Halaman Tanjakan' }).props.onPress());
+  expect(screen.root.findByProps({ children: 'Profil elevasi belum tersedia.' })).toBeTruthy();
+  expect(screen.root.findByProps({ children: 'Sisa naik' })).toBeTruthy();
+  expect(screen.root.findByProps({ children: '+35 m' })).toBeTruthy();
+  await ReactTestRenderer.act(() => screen.update(renderDashboard({ ...climbAlert, gainRemainingMeters: null })));
+  expect(screen.root.findByProps({ children: '—' })).toBeTruthy();
+  await ReactTestRenderer.act(() => screen.unmount());
+});

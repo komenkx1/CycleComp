@@ -2,7 +2,7 @@ import React from 'react';
 import ReactTestRenderer from 'react-test-renderer';
 
 import { NavigationGuidanceBanner } from '../src/features/navigation/NavigationGuidanceBanner';
-import { ClimbAlertBanner } from '../src/features/ride/ClimbAlertBanner';
+import { ClimbAlertBanner, buildClimbProfileSamples } from '../src/features/ride/ClimbAlertBanner';
 import type { TurnInstruction } from '../src/domain/routes/navigation/routeNavigationGuidance';
 import type { ClimbAlertState } from '../src/domain/routes/elevation/routeElevationAnalysis';
 
@@ -26,6 +26,19 @@ describe('NavigationGuidanceBanner', () => {
     nextClimbDistanceMeters: null,
     totalClimbs: 0,
   };
+
+  test('prioritizes the off-route warning and keeps it visible when collapsed', () => {
+    let screen!: ReactTestRenderer.ReactTestRenderer;
+    ReactTestRenderer.act(() => { screen = ReactTestRenderer.create(
+      <NavigationGuidanceBanner instruction={turnInstruction} climbAlert={noClimb} hasRoute isOffRoute />,
+    ); });
+    expect(screen.root.findByProps({ children: 'Keluar dari rute' })).toBeTruthy();
+    expect(screen.root.findByProps({ children: 'Kembali ke garis rute' })).toBeTruthy();
+    expect(screen.root.findAllByProps({ children: 'Belok kanan' })).toHaveLength(0);
+    ReactTestRenderer.act(() => screen.root.findByProps({ accessibilityLabel: 'Perkecil panduan' }).props.onPress());
+    expect(screen.root.findByProps({ children: 'Keluar dari rute · kembali ke garis rute' })).toBeTruthy();
+    ReactTestRenderer.act(() => screen.unmount());
+  });
 
   test('shows remaining distance separately from the next turn', () => {
     let screen: ReactTestRenderer.ReactTestRenderer;
@@ -57,6 +70,17 @@ describe('NavigationGuidanceBanner', () => {
       endCoordinate: [115.21, -8.61],
     },
   };
+
+  test('uses only recorded route samples for a climb profile', () => {
+    if (upcomingClimb.type !== 'upcoming') throw new Error('Expected upcoming climb');
+    const climb = upcomingClimb.climb;
+    expect(buildClimbProfileSamples(climb)).toEqual([]);
+    const routeSamples = [
+      { coordinate: climb.startCoordinate, distanceMeters: 1000, elevationMeters: 45, gradePercent: 7 },
+      { coordinate: climb.endCoordinate, distanceMeters: 1800, elevationMeters: 107, gradePercent: 8 },
+    ];
+    expect(buildClimbProfileSamples(climb, routeSamples)).toEqual(routeSamples);
+  });
 
   test('keeps hook order when a climb appears and disappears', () => {
     let screen!: ReactTestRenderer.ReactTestRenderer;

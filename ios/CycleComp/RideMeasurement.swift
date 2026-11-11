@@ -1,5 +1,18 @@
 import Foundation
 
+enum RideVirtualPower {
+  static func estimateWatts(speedMetersPerSecond: Double?, gradePercent: Double?, totalMassKg: Double?) -> Double? {
+    guard let speed = speedMetersPerSecond, speed.isFinite, speed >= 0, speed <= 30,
+          let grade = gradePercent, grade.isFinite, abs(grade) <= 30,
+          let mass = totalMassKg, mass.isFinite, (30...250).contains(mass) else { return nil }
+    let slope = atan(grade / 100)
+    let gravity = mass * 9.80665 * sin(slope)
+    let rolling = mass * 9.80665 * cos(slope) * 0.005
+    let aerodynamic = 0.5 * 1.225 * 0.40 * speed * speed
+    return max(0, (gravity + rolling + aerodynamic) * speed / 0.97)
+  }
+}
+
 struct RideSpeedSmoother {
   private var filteredSpeedMetersPerSecond: Double?
   private var lastUpdateAt: Date?

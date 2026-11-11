@@ -8,6 +8,8 @@ export type RideSnapshot = {
   watchHeartRateStatus?: 'off' | 'connecting' | 'ready' | 'readingInfo' | 'starting' | 'active' | 'pausing' | 'paused' | 'resuming' | 'stopping' | 'disconnected' | 'error';
   watchHeartRateMessage?: string | null;
   heartRateBpm?: number | null;
+  virtualPowerWatts?: number | null;
+  virtualPowerMassKg?: number;
   heartRateRecordedAt?: string | null;
   heartRateFileUrl?: string;
   rideId?: string;
@@ -117,6 +119,7 @@ type RideTrackingModule = {
   getRideState(): Promise<RideSnapshot>;
   getRideElevationTrack(): Promise<RecordedRideElevationSegment>;
   setAutoPauseEnabled(enabled: boolean): Promise<RideSnapshot>;
+  setVirtualPowerMass?(massKg: number): Promise<RideSnapshot>;
   setSensorDiagnosticsEnabled(enabled: boolean): Promise<RideSnapshot>;
   setWatchHeartRateEnabled(enabled: boolean): Promise<RideSnapshot>;
   startRide(): Promise<RideSnapshot>;
@@ -325,6 +328,7 @@ export function useRideTracking() {
     refreshRide,
     getRideElevationTrack: () => rideTracking?.getRideElevationTrack() ?? Promise.resolve([]),
     setAutoPauseEnabled: (enabled: boolean) => rideTracking && runRideAction(() => rideTracking.setAutoPauseEnabled(enabled)),
+    setVirtualPowerMass: (massKg: number) => rideTracking?.setVirtualPowerMass && runRideAction(() => rideTracking.setVirtualPowerMass!(massKg)),
     setSensorDiagnosticsEnabled: (enabled: boolean) => rideTracking && runRideAction(() => rideTracking.setSensorDiagnosticsEnabled(enabled)),
     setWatchHeartRateEnabled,
     startRide,

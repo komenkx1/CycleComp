@@ -16,6 +16,30 @@ jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
+test('shows heart rate and clearly marks an unavailable reading', () => {
+  let renderer: ReactTestRenderer.ReactTestRenderer;
+  const controls = { onWakeUp: jest.fn(), onDisableEndurance: jest.fn() };
+  ReactTestRenderer.act(() => { renderer = ReactTestRenderer.create(
+    <EnduranceScreenOverlay visible heartRateBpm={143} {...controls} />,
+  ); });
+  expect(renderer!.root.findByProps({ accessibilityLabel: 'Heart rate 143 bpm' })).toBeTruthy();
+  ReactTestRenderer.act(() => { renderer!.update(<EnduranceScreenOverlay visible heartRateBpm={null} {...controls} />); });
+  expect(renderer!.root.findByProps({ children: 'HR tidak tersedia' })).toBeTruthy();
+  ReactTestRenderer.act(() => renderer!.unmount());
+});
+
+test('labels virtual power as an estimate and handles a missing sample', () => {
+  let renderer: ReactTestRenderer.ReactTestRenderer;
+  const controls = { onWakeUp: jest.fn(), onDisableEndurance: jest.fn() };
+  ReactTestRenderer.act(() => { renderer = ReactTestRenderer.create(
+    <EnduranceScreenOverlay visible virtualPowerWatts={187.6} {...controls} />,
+  ); });
+  expect(renderer!.root.findByProps({ accessibilityLabel: 'Estimasi power 188 watt' })).toBeTruthy();
+  ReactTestRenderer.act(() => { renderer!.update(<EnduranceScreenOverlay visible virtualPowerWatts={null} {...controls} />); });
+  expect(renderer!.root.findByProps({ accessibilityLabel: 'Estimasi power tidak tersedia' })).toBeTruthy();
+  ReactTestRenderer.act(() => renderer!.unmount());
+});
+
 test('shows average speed calculated from moving time in endurance mode', async () => {
   let renderer: ReactTestRenderer.ReactTestRenderer;
   await ReactTestRenderer.act(() => {

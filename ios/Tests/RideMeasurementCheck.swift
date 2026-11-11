@@ -15,7 +15,18 @@ import Foundation
     checkSignedLiveGrade(from: rideStart)
     checkSlowRollAndUnanchoredAltitude(from: rideStart)
     checkElevationQualitySummary()
+    checkVirtualPower()
     print("Ride motion, speed, altitude, and signed grade checks passed")
+  }
+
+  private static func checkVirtualPower() {
+    let flat = RideVirtualPower.estimateWatts(speedMetersPerSecond: 6, gradePercent: 0, totalMassKg: 80)!
+    let climb = RideVirtualPower.estimateWatts(speedMetersPerSecond: 6, gradePercent: 6, totalMassKg: 80)!
+    let descent = RideVirtualPower.estimateWatts(speedMetersPerSecond: 6, gradePercent: -10, totalMassKg: 80)!
+    precondition(abs(flat - 78.8) < 0.2 && climb > flat && descent == 0)
+    precondition(RideVirtualPower.estimateWatts(speedMetersPerSecond: nil, gradePercent: 0, totalMassKg: 80) == nil)
+    precondition(RideVirtualPower.estimateWatts(speedMetersPerSecond: 6, gradePercent: nil, totalMassKg: 80) == nil)
+    precondition(RideVirtualPower.estimateWatts(speedMetersPerSecond: 6, gradePercent: 0, totalMassKg: 0) == nil)
   }
 
   private static func checkPositionSpeedFallback(from rideStart: Date) {
