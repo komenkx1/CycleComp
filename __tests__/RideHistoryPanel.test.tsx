@@ -1,6 +1,6 @@
 import React from 'react';
 import ReactTestRenderer, { act } from 'react-test-renderer';
-import { Alert } from 'react-native';
+import { Alert, Text } from 'react-native';
 
 import { RideHistoryPanel } from '../src/features/history/RideHistoryPanel';
 import type { SavedRideFile } from '../src/features/ride/useRideTracking';
@@ -75,6 +75,19 @@ describe('RideHistoryPanel', () => {
     expect(root.findByProps({ children: 'CycleComp-RIDE1.gpx' })).toBeTruthy();
   });
 
+  it('shows the estimated power summary only when the ride contains estimated samples', () => {
+    const rawGpxXml = `<gpx xmlns:cyclecomp="https://mangwahyu.tech/cyclecomp/gpx/1"><trk><trkseg>
+      <trkpt><time>2026-01-01T00:00:00Z</time><extensions><power>100</power><cyclecomp:powerSource>estimated</cyclecomp:powerSource></extensions></trkpt>
+      <trkpt><time>2026-01-01T00:00:02Z</time><extensions><power>200</power><cyclecomp:powerSource>estimated</cyclecomp:powerSource></extensions></trkpt>
+      </trkseg></trk></gpx>`;
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    act(() => { renderer = ReactTestRenderer.create(<RideHistoryPanel {...defaultProps} selectedRide={{ ...mockSelectedRide, rawGpxXml }} />); });
+    expect(renderer.root.findByProps({ testID: 'ride-history-power' }).props.children).toBe('150 W');
+    act(() => { renderer.update(<RideHistoryPanel {...defaultProps} selectedRide={mockSelectedRide} />); });
+    expect(renderer.root.findAllByProps({ testID: 'ride-history-power' })).toHaveLength(0);
+    act(() => renderer.unmount());
+  });
+
   it('calls onSelectRide when clicking a ride card', () => {
     const onSelectRide = jest.fn();
     let renderer!: ReactTestRenderer.ReactTestRenderer;
@@ -131,6 +144,64 @@ describe('RideHistoryPanel', () => {
       backBtn.props.onPress();
     });
     expect(onClearSelectedRide).toHaveBeenCalled();
+  });
+
+  it('shows unavailable elevation metrics when the ride has no elevation samples', () => {
+    const routeWithoutElevation: GpxRoute = {
+      ...mockRoute,
+      segments: [{ points: [
+        { coordinate: [115.25, -8.68], elevationMeters: null },
+        { coordinate: [115.26, -8.69], elevationMeters: null },
+      ] }],
+      elevationPointCount: 0,
+      minimumElevationMeters: null,
+      maximumElevationMeters: null,
+    };
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    act(() => {
+      renderer = ReactTestRenderer.create(
+        <RideHistoryPanel
+          {...defaultProps}
+          selectedRide={{ ...mockSelectedRide, route: routeWithoutElevation }}
+        />,
+      );
+    });
+
+    expect(renderer.root.findAllByType(Text).filter(text => text.props.children === '—')).toHaveLength(2);
+    expect(renderer.root.findByProps({ children: 'Profil elevasi tidak tersedia.' })).toBeTruthy();
+  });
+
+  it('shows a loading error without presenting an empty history as fact', () => {
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    act(() => {
+      renderer = ReactTestRenderer.create(
+        <RideHistoryPanel {...defaultProps} rides={[]} error="Gagal memuat riwayat" />,
+      );
+    });
+    expect(renderer.root.findByProps({ children: 'Gagal memuat riwayat' })).toBeTruthy();
+    expect(renderer.root.findAllByProps({ children: 'Belum Ada Riwayat' })).toHaveLength(0);
+  });
+
+  it('keeps route, share and sensor trace actions connected', () => {
+    const onUseAsNavRoute = jest.fn();
+    const onShareRide = jest.fn();
+    const onShareSensorTrace = jest.fn();
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    act(() => {
+      renderer = ReactTestRenderer.create(
+        <RideHistoryPanel {...defaultProps} selectedRide={mockSelectedRide}
+          onUseAsNavRoute={onUseAsNavRoute} onShareRide={onShareRide}
+          onShareSensorTrace={onShareSensorTrace} />,
+      );
+    });
+    act(() => {
+      renderer.root.findByProps({ accessibilityLabel: 'Gunakan rute ini untuk navigasi' }).props.onPress();
+      renderer.root.findByProps({ accessibilityLabel: 'Bagikan file GPX' }).props.onPress();
+      renderer.root.findByProps({ accessibilityLabel: 'Bagikan trace diagnostik sensor' }).props.onPress();
+    });
+    expect(onUseAsNavRoute).toHaveBeenCalledWith(mockRoute);
+    expect(onShareRide).toHaveBeenCalledWith(mockRides[0].fileUrl);
+    expect(onShareSensorTrace).toHaveBeenCalledWith(mockRides[0].fileUrl);
   });
 
   it('prompts confirmation when clicking delete', () => {

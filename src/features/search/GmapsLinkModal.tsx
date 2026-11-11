@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -20,12 +20,14 @@ import {
 } from '../../domain/routes/search/gmapsLinkToGpxRoute';
 import { AmoledTheme } from '../../theme/colors';
 import { SFIcon } from '../../components/SFIcon';
+import { AmoledSwitch } from '../../components/AmoledSwitch';
 
 interface GmapsLinkModalProps {
   visible: boolean;
   onClose: () => void;
   onRouteCreated: (route: GpxRoute) => void;
   userCoordinate?: [number, number] | null;
+  startFromCurrentPosition?: boolean;
 }
 
 type PipelineStep = 'idle' | 'resolving' | 'geocoding' | 'routing' | 'elevation' | 'building' | 'done' | 'error';
@@ -46,12 +48,18 @@ export function GmapsLinkModal({
   onClose,
   onRouteCreated,
   userCoordinate,
+  startFromCurrentPosition = false,
 }: GmapsLinkModalProps) {
   const insets = useSafeAreaInsets();
   const [urlInput, setUrlInput] = useState('');
   const [currentStep, setCurrentStep] = useState<PipelineStep>('idle');
   const [statusMessage, setStatusMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [useCurrentPosition, setUseCurrentPosition] = useState(startFromCurrentPosition);
+
+  useEffect(() => {
+    if (visible) setUseCurrentPosition(startFromCurrentPosition);
+  }, [visible, startFromCurrentPosition]);
 
   const isProcessing = currentStep !== 'idle' && currentStep !== 'done' && currentStep !== 'error';
   const stepIndex = STEP_ORDER[currentStep];
@@ -85,6 +93,8 @@ export function GmapsLinkModal({
           setStatusMessage(progress.message);
         },
         userCoordinate,
+        {},
+        useCurrentPosition,
       );
 
       setCurrentStep('done');
@@ -114,7 +124,7 @@ export function GmapsLinkModal({
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           style={styles.keyboardContainer}
         >
-          <View style={[styles.card, { paddingBottom: Math.max(insets.bottom, 20) + 10 }]}>
+          <View style={[styles.card, { paddingTop: Math.max(insets.top, 20) + 16, paddingBottom: Math.max(insets.bottom, 20) }]}>
             {/* Header */}
             <View style={styles.headerRow}>
               <View style={styles.headerTitleBlock}>
@@ -145,10 +155,22 @@ export function GmapsLinkModal({
               {/* Description */}
               <Text style={styles.description}>
                 Titik awal, tujuan, dan singgah dibaca dari link Google Maps. Jalur sepeda
-                dihitung ulang dan dapat berbeda dari jalur Google Maps, termasuk rute motor.
+                dihitung ulang oleh OSRM dan dapat berbeda dari Google Maps. Untuk mengikuti
+                garis tertentu, impor file GPX yang berisi jalur tersebut.
               </Text>
 
+              {startFromCurrentPosition ? (
+                <View style={styles.originChoice}>
+                  <View style={styles.originChoiceText}>
+                    <Text style={styles.inputLabel}>Mulai dari lokasi saat ini</Text>
+                    <Text style={styles.description}>Saat aktif, titik awal dalam link diganti lokasi sekarang. Matikan untuk memakai titik awal link jika tersedia.</Text>
+                  </View>
+                  <AmoledSwitch accessibilityLabel="Mulai rute dari lokasi saat ini" value={useCurrentPosition} onValueChange={setUseCurrentPosition} disabled={isProcessing} />
+                </View>
+              ) : null}
+
               {/* Input Area */}
+              <Text style={styles.inputLabel}>LINK GOOGLE MAPS</Text>
               <View style={styles.inputContainer}>
                 <TextInput
                   accessibilityLabel="Input link Google Maps"
@@ -243,7 +265,7 @@ export function GmapsLinkModal({
                     pressed && styles.primaryButtonPressed,
                   ]}
                 >
-                  <Text style={styles.primaryButtonText}>
+                  <Text style={[styles.primaryButtonText, urlInput.trim().length === 0 && styles.primaryButtonTextDisabled]}>
                     {errorMessage ? 'Coba Lagi' : 'Buat Rute Sepeda'}
                   </Text>
                 </Pressable>
@@ -262,7 +284,7 @@ export function GmapsLinkModal({
                   2. Pilih tujuan dan tap <Text style={styles.tipHighlight}>Rute (Directions)</Text>.
                 </Text>
                 <Text style={styles.tipText}>
-                  3. Pilih titik awal dan tambahkan titik singgah jika ada.
+                  3. Pilih titik awal dan tambahkan titik singgah pada ruas yang ingin dilewati. Jalur tetap bisa berbeda.
                 </Text>
                 <Text style={styles.tipText}>
                   4. Tap menu titik tiga (⋮) atau tombol <Text style={styles.tipHighlight}>Bagikan (Share)</Text> lalu pilih <Text style={styles.tipHighlight}>Salin link</Text>.
@@ -313,23 +335,21 @@ function StepItem({
 }
 
 const styles = StyleSheet.create({
+  originChoice: { flexDirection: 'row', alignItems: 'center', gap: 12, marginVertical: 12 },
+  originChoiceText: { flex: 1 },
   backdrop: {
     flex: 1,
     backgroundColor: AmoledTheme.modalBackdrop,
     justifyContent: 'flex-end',
   },
   keyboardContainer: {
+    flex: 1,
     width: '100%',
   },
   card: {
-    backgroundColor: AmoledTheme.surfaceElevated,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    borderWidth: 1,
-    borderColor: AmoledTheme.borderDefault,
+    backgroundColor: AmoledTheme.background,
+    flex: 1,
     paddingHorizontal: 20,
-    paddingTop: 18,
-    maxHeight: '90%',
   },
   headerRow: {
     flexDirection: 'row',
@@ -342,22 +362,22 @@ const styles = StyleSheet.create({
     marginRight: 12,
   },
   badgeLabel: {
-    fontSize: 10,
+    fontSize: 14,
     fontWeight: '700',
-    letterSpacing: 1.2,
+    letterSpacing: 1,
     color: AmoledTheme.accentOrange,
     textTransform: 'uppercase',
     marginBottom: 3,
   },
   title: {
-    fontSize: 18,
+    fontSize: 28,
     fontWeight: '700',
     color: AmoledTheme.textPrimary,
   },
   closeButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 48,
+    height: 48,
+    borderRadius: 12,
     backgroundColor: AmoledTheme.surfaceInteractive,
     alignItems: 'center',
     justifyContent: 'center',
@@ -377,10 +397,17 @@ const styles = StyleSheet.create({
     paddingBottom: 16,
   },
   description: {
-    fontSize: 13,
+    fontSize: 16,
     color: AmoledTheme.textSecondary,
-    lineHeight: 18,
-    marginBottom: 16,
+    lineHeight: 23,
+    marginBottom: 20,
+  },
+  inputLabel: {
+    color: AmoledTheme.textSecondary,
+    fontSize: 14,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    marginBottom: 8,
   },
   inputContainer: {
     position: 'relative',
@@ -394,15 +421,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 12,
     paddingRight: 40,
-    fontSize: 14,
+    fontSize: 16,
+    minHeight: 56,
     color: AmoledTheme.textPrimary,
   },
   clearInputButton: {
     position: 'absolute',
-    right: 10,
-    top: 10,
-    width: 24,
-    height: 24,
+    right: 4,
+    top: 4,
+    width: 48,
+    height: 48,
     borderRadius: 12,
     backgroundColor: AmoledTheme.surfaceInteractive,
     alignItems: 'center',
@@ -448,7 +476,8 @@ const styles = StyleSheet.create({
     marginRight: 8,
   },
   stepLabel: {
-    fontSize: 12,
+    flex: 1,
+    fontSize: 14,
     color: AmoledTheme.textTertiary,
   },
   stepLabelDone: {
@@ -482,21 +511,21 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   errorMessage: {
-    fontSize: 12,
+    fontSize: 14,
     color: AmoledTheme.textPrimary,
-    lineHeight: 16,
+    lineHeight: 20,
   },
   primaryButton: {
     backgroundColor: AmoledTheme.accentOrange,
     borderRadius: 14,
     paddingVertical: 14,
+    minHeight: 52,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 20,
   },
   primaryButtonDisabled: {
     backgroundColor: AmoledTheme.surfaceInteractive,
-    opacity: 0.5,
   },
   primaryButtonPressed: {
     opacity: 0.85,
@@ -507,6 +536,9 @@ const styles = StyleSheet.create({
     color: '#000000',
     letterSpacing: 0.3,
   },
+  primaryButtonTextDisabled: {
+    color: AmoledTheme.textSecondary,
+  },
   tipsSection: {
     backgroundColor: AmoledTheme.background,
     borderWidth: 1,
@@ -515,7 +547,8 @@ const styles = StyleSheet.create({
     padding: 14,
   },
   tipsTitle: {
-    fontSize: 11,
+    flex: 1,
+    fontSize: 14,
     fontWeight: '700',
     color: AmoledTheme.textSecondary,
     letterSpacing: 0.8,
@@ -527,10 +560,10 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   tipText: {
-    fontSize: 12,
+    fontSize: 14,
     color: AmoledTheme.textTertiary,
-    lineHeight: 18,
-    marginBottom: 2,
+    lineHeight: 21,
+    marginBottom: 4,
   },
   tipHighlight: {
     color: AmoledTheme.textPrimary,

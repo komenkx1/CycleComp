@@ -19,6 +19,7 @@ type EnduranceScreenOverlayProps = {
   visible: boolean;
   speedKmh?: number | null;
   heartRateBpm?: number | null;
+  virtualPowerWatts?: number | null;
   elapsedSeconds?: number;
   distanceMeters?: number;
   movingSeconds?: number;
@@ -27,6 +28,8 @@ type EnduranceScreenOverlayProps = {
   liveGradeSource?: 'barometer' | 'gps' | null;
   routeProfileAvailable?: boolean;
   turnInstruction?: TurnInstruction | null;
+  hasRoute?: boolean;
+  distanceToFinishMeters?: number | null;
   climbAlert?: ClimbAlertState;
   terrainClimbStatus?: 'unavailable' | 'unknown' | 'none' | 'upcoming' | 'active' | null;
   terrainClimbDistanceToStartMeters?: number | null;
@@ -50,6 +53,7 @@ export function EnduranceScreenOverlay({
   visible,
   speedKmh = 0,
   heartRateBpm,
+  virtualPowerWatts,
   elapsedSeconds = 0,
   distanceMeters = 0,
   movingSeconds = 0,
@@ -58,6 +62,8 @@ export function EnduranceScreenOverlay({
   liveGradeSource = null,
   routeProfileAvailable = false,
   turnInstruction,
+  hasRoute = false,
+  distanceToFinishMeters = null,
   climbAlert,
   terrainClimbStatus = null,
   terrainClimbDistanceToStartMeters = null,
@@ -85,14 +91,16 @@ export function EnduranceScreenOverlay({
       : climbAlert?.type === 'upcoming'
       ? climbAlert.climb.averageGradePercent
       : 0)
-    : (terrainClimbAverageGradePercent ?? 0);
+    : terrainClimbAverageGradePercent;
   const climbTitle = hasGpxClimb
     ? (climbAlert?.type === 'active'
       ? `Tanjakan #${climbAlert.climbIndex}`
       : `Tanjakan ${climbAlert?.type === 'upcoming' ? climbAlert.distanceToStartMeters : 0}m lagi`)
     : (terrainClimbStatus === 'active'
       ? 'Tanjakan di Depan'
-      : `Tanjakan ${Math.round(terrainClimbDistanceToStartMeters ?? 0)}m lagi`);
+      : terrainClimbDistanceToStartMeters == null
+        ? 'Tanjakan di depan'
+        : `Tanjakan ${Math.round(terrainClimbDistanceToStartMeters)}m lagi`);
 
   return (
     <Pressable
@@ -111,7 +119,7 @@ export function EnduranceScreenOverlay({
       <View style={styles.topStatusRow}>
         <View style={styles.enduranceBadge}>
           <SFIcon name="bolt.fill" color={AmoledTheme.accentYellow} size={15} />
-          <Text style={styles.enduranceBadgeText}>AMOLED ENDURANCE MODE</Text>
+          <Text style={styles.enduranceBadgeText}>ENDURANCE</Text>
         </View>
         <Pressable
           accessibilityHint="Matikan mode hemat baterai"
@@ -139,7 +147,22 @@ export function EnduranceScreenOverlay({
         </Text>
       </View>
 
-      {heartRateBpm != null ? <Text style={styles.heartRateText}>{heartRateBpm} bpm</Text> : null}
+      <View style={styles.effortRow}>
+        <View accessibilityLabel={heartRateBpm == null ? 'Heart rate tidak tersedia' : `Heart rate ${heartRateBpm} bpm`} style={styles.heartRateSection}>
+          <Text style={styles.heartRateLabel}>HEART RATE</Text>
+          <Text testID="endurance-heart-rate" style={styles.heartRateText}>
+            {heartRateBpm == null ? '—' : heartRateBpm} <Text style={styles.heartRateUnit}>bpm</Text>
+          </Text>
+          {heartRateBpm == null ? <Text style={styles.heartRateUnavailable}>HR tidak tersedia</Text> : null}
+        </View>
+        <View accessibilityLabel={virtualPowerWatts == null ? 'Estimasi power tidak tersedia' : `Estimasi power ${Math.round(virtualPowerWatts)} watt`} style={styles.heartRateSection}>
+          <Text style={styles.heartRateLabel}>POWER EST.</Text>
+          <Text style={styles.heartRateText}>
+            {virtualPowerWatts == null ? '—' : Math.round(virtualPowerWatts)} <Text style={styles.heartRateUnit}>W</Text>
+          </Text>
+          {virtualPowerWatts == null ? <Text style={styles.heartRateUnavailable}>Belum tersedia</Text> : null}
+        </View>
+      </View>
 
       <View style={styles.liveGradeRow}>
         <SFIcon name="mountain.2.fill" color={getGradeColor(liveGradePercent)} size={16} />
@@ -149,6 +172,11 @@ export function EnduranceScreenOverlay({
             : `Gradien aktual ${formatGradePercent(liveGradePercent)} · ${liveGradeSource === 'gps' ? 'GPS' : 'barometer'}`}
         </Text>
       </View>
+      {hasRoute ? (
+        <Text testID="endurance-distance-to-finish" style={[styles.liveGradeText, { color: AmoledTheme.textPrimary }]}>
+          {`Sisa ke finish: ${distanceToFinishMeters == null ? '—' : `${(distanceToFinishMeters / 1000).toFixed(1).replace('.', ',')} km`}`}
+        </Text>
+      ) : null}
 
       {/* Turn or Climb Next Action HUD */}
       {turnInstruction && turnInstruction.type !== 'straight' ? (
@@ -161,6 +189,12 @@ export function EnduranceScreenOverlay({
             <Text style={styles.turnDistance}>
               {formatNavigationDistance(turnInstruction.distanceMeters)}
             </Text>
+            {hasClimb ? (
+              <>
+                <Text numberOfLines={1} style={styles.turnTitle}>{climbTitle}</Text>
+                <Text style={[styles.turnDistance, { color: getGradeColor(climbGrade) }]}>{formatGradePercent(climbGrade)}</Text>
+              </>
+            ) : null}
           </View>
         </View>
       ) : hasClimb ? (
@@ -209,7 +243,7 @@ export function EnduranceScreenOverlay({
         </View>
         <View style={styles.statDivider} />
         <View style={styles.statBox}>
-          <Text style={styles.statLabel}>ELEVASI</Text>
+          <Text style={styles.statLabel}>TOTAL NAIK</Text>
           <Text style={styles.statValue}>
             {`${totalAscentMeters == null ? '—' : `+${Math.round(totalAscentMeters)}`} `}
             <Text style={styles.statUnit}>m</Text>
@@ -225,7 +259,12 @@ export function EnduranceScreenOverlay({
 }
 
 const styles = StyleSheet.create({
-  heartRateText: { color: AmoledTheme.textPrimary, fontSize: 28, fontWeight: '600', textAlign: 'center', marginBottom: 16 },
+  effortRow: { flexDirection: 'row', width: '100%', justifyContent: 'space-evenly' },
+  heartRateSection: { alignItems: 'center', minHeight: 66, flex: 1 },
+  heartRateLabel: { color: AmoledTheme.textSecondary, fontSize: 14, fontWeight: '700', letterSpacing: 0.5 },
+  heartRateText: { color: AmoledTheme.textPrimary, fontSize: 36, fontVariant: ['tabular-nums'], fontWeight: '700', textAlign: 'center' },
+  heartRateUnit: { color: AmoledTheme.textSecondary, fontSize: 16, fontWeight: '600' },
+  heartRateUnavailable: { color: AmoledTheme.textSecondary, fontSize: 14 },
   liveGradeRow: { alignItems: 'center', flexDirection: 'row', gap: 7, justifyContent: 'center' },
   liveGradeText: { fontSize: 14, fontVariant: ['tabular-nums'], fontWeight: '700' },
 
@@ -268,12 +307,14 @@ const styles = StyleSheet.create({
     borderColor: AmoledTheme.borderSubtle,
     borderRadius: 14,
     borderWidth: 1,
-    paddingHorizontal: 10,
+    minHeight: 48,
+    justifyContent: 'center',
+    paddingHorizontal: 12,
     paddingVertical: 5,
   },
   exitButtonText: {
     color: AmoledTheme.textSecondary,
-    fontSize: 11,
+    fontSize: 14,
     fontWeight: '600',
   },
   speedSection: {
@@ -364,7 +405,7 @@ const styles = StyleSheet.create({
   },
   statLabel: {
     color: AmoledTheme.textSecondary,
-    fontSize: 10,
+    fontSize: 14,
     fontWeight: '600',
     letterSpacing: 0.5,
     marginBottom: 4,

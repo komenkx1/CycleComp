@@ -105,12 +105,18 @@ describe('routeNavigationGuidance', () => {
     });
 
     test('detects finish when rider is near destination', () => {
-      const riderNearEnd: RouteCoordinate = [115.2040, -8.6425];
+      const riderNearEnd: RouteCoordinate = [115.2040, -8.6421];
       const guidance = getNavigationGuidance(testRoute, riderNearEnd);
 
       expect(guidance).not.toBeNull();
       expect(guidance!.type).toBe('finish');
       expect(guidance!.title).toBe('Tiba di tujuan');
+    });
+
+    test('does not report arrival halfway along a sparse route', () => {
+      const sparseRoute: RouteCoordinate[] = [[115.2, -8.65], [115.205, -8.65], [115.21, -8.65]];
+      expect(getNavigationGuidance(sparseRoute, [115.205, -8.65])?.type).toBe('straight');
+      expect(getNavigationGuidance(sparseRoute, [115.209, -8.65])?.type).toBe('straight');
     });
   });
 });

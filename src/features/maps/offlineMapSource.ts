@@ -1,7 +1,7 @@
 import type { GpxRoute, RouteBounds } from '../../domain/routes/gpx/GpxRoute';
 
 export const ONLINE_MAP_STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty';
-export const CYCLECOMP_VPS_BASE_URL = 'https://168.110.215.60:9443';
+export const CYCLECOMP_VPS_BASE_URL = 'https://maps.mangwahyu.tech';
 export const INDONESIA_MAP_STYLE_URL = `${CYCLECOMP_VPS_BASE_URL}/style-v4.json`;
 export const INDONESIA_MAP_SOURCE_ID = 'indonesia-protomaps-20261010-z15-v4';
 export const INDONESIA_MAP_BOUNDS: RouteBounds = [

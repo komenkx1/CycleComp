@@ -94,7 +94,7 @@ export function ClimbAlertBanner({ alert, samples }: ClimbAlertBannerProps) {
       </View>
 
       {/* 2D Mini Profile dengan Rider Dot (Signature Garmin ClimbPro) */}
-      <View style={styles.progressContainer}>
+      {climbSamples.length >= 2 ? <View style={styles.progressContainer}>
         <ElevationProfileChart
           samples={climbSamples}
           height={48}
@@ -102,7 +102,7 @@ export function ClimbAlertBanner({ alert, samples }: ClimbAlertBannerProps) {
           riderProgressPercent={isOngoing ? alert.progressPercent : null}
           barCount={32}
         />
-      </View>
+      </View> : null}
 
       <View style={styles.detailRow}>
         <Text numberOfLines={1} style={styles.detailText}>
@@ -165,32 +165,12 @@ export function buildClimbProfileSamples(
         s.distanceMeters <= climb.endDistanceMeters &&
         s.elevationMeters !== null,
     );
-    if (climbSamples.length >= 4) {
+    if (climbSamples.length >= 2) {
       return climbSamples;
     }
   }
 
-  // Fallback kurva tanjakan sintetis realistis
-  const startEle = climb.startElevationMeters ?? 50;
-  const endEle = climb.endElevationMeters ?? (startEle + climb.elevationGainMeters);
-  const count = 30;
-  const stepDist = Math.max(10, climb.distanceMeters / count);
-  const result: RouteSample[] = [];
-
-  for (let i = 0; i <= count; i++) {
-    const fraction = i / count;
-    // kurva sigmoid natural tanjakan
-    const curve = Math.sin(fraction * Math.PI * 0.5);
-    const ele = startEle + (endEle - startEle) * curve;
-    result.push({
-      coordinate: climb.startCoordinate,
-      distanceMeters: climb.startDistanceMeters + i * stepDist,
-      elevationMeters: ele,
-      gradePercent: climb.averageGradePercent,
-    });
-  }
-
-  return result;
+  return [];
 }
 
 const styles = StyleSheet.create({

@@ -15,10 +15,10 @@ import {
   Alert,
   Image,
   Linking,
+  Platform,
   Pressable,
   ScrollView,
   StatusBar,
-  Switch,
   StyleSheet,
   Text,
   useWindowDimensions,
@@ -36,6 +36,7 @@ import {
   reverseRouteForReturn,
 } from '../../domain/routes/gpx/routeBack';
 import { prepareRecordedRouteBack } from './prepareRecordedRouteBack';
+import { loadActiveRideRoute, saveActiveRideRoute } from './activeRideRoute';
 import {
   boundsContain,
   INDONESIA_MAP_BOUNDS,
@@ -61,13 +62,14 @@ import { StravaSettingsCard } from '../strava/StravaSettingsCard';
 import { AmoledTheme } from '../../theme/colors';
 import {
   analyzeRouteElevation,
-  distanceBetweenCoords,
+  distanceFromRouteMeters,
   findClimbStateForRider,
   type ClimbAlertState,
 } from '../../domain/routes/elevation/routeElevationAnalysis';
 import { useAppActive } from '../ride/useAppActive';
 import { NavigationGuidanceBanner } from '../navigation/NavigationGuidanceBanner';
 import { getNavigationGuidance } from '../../domain/routes/navigation/routeNavigationGuidance';
+import { remainingRouteDistanceMeters } from '../../domain/routes/elevation/routeElevationAnalysis';
 import { GmapsLinkModal } from '../search/GmapsLinkModal';
 import { ElevationProfileChart } from '../elevation/ElevationProfileChart';
 import { ClimbListSection } from '../elevation/ClimbListSection';
@@ -84,6 +86,7 @@ import {
 } from '../audio/audioCueService';
 import { EnduranceScreenOverlay } from '../ride/EnduranceScreenOverlay';
 import { SFIcon } from '../../components/SFIcon';
+import { AmoledSwitch } from '../../components/AmoledSwitch';
 
 const INITIAL_MAP_CENTER: [number, number] = [115.1889, -8.4095];
 
@@ -111,6 +114,8 @@ export function RoutePreviewScreen() {
   const appActive = useAppActive();
   const { height: windowHeight } = useWindowDimensions();
   const [activeTab, setActiveTab] = useState<MainTab>('ride');
+  const [showRideMap, setShowRideMap] = useState(false);
+  const [showRouteMap, setShowRouteMap] = useState(false);
   const [routeLoadState, setRouteLoadState] = useState<RouteLoadState>({
     status: 'empty',
   });
@@ -118,6 +123,8 @@ export function RoutePreviewScreen() {
   const [routeBackBusy, setRouteBackBusy] = useState(false);
   const [routeBackSourceRoute, setRouteBackSourceRoute] = useState<GpxRoute | null>(null);
   const [gmapsModalVisible, setGmapsModalVisible] = useState(false);
+  const [mapsImportDuringRide, setMapsImportDuringRide] = useState(false);
+  const [pendingRideRoute, setPendingRideRoute] = useState<GpxRoute | null>(null);
   const [navigationZoom, setNavigationZoom] = useState(INITIAL_NAVIGATION_ZOOM);
   const [povMode, setPovMode] = useState<'3d' | '2d'>('3d');
   const [currentPosition, setCurrentPosition] = useState<{
@@ -148,6 +155,7 @@ export function RoutePreviewScreen() {
     trackSegments,
     lastFinishedRide,
     rideError,
+    watchPermissionError,
     rideBusy,
     rideChecking,
     refreshRide,
@@ -155,6 +163,7 @@ export function RoutePreviewScreen() {
     startRide,
     setWatchHeartRateEnabled,
     setAutoPauseEnabled,
+    setVirtualPowerMass,
     setSensorDiagnosticsEnabled,
     pauseRide,
     resumeRide,
@@ -171,7 +180,9 @@ export function RoutePreviewScreen() {
 
   const importedRoute =
     routeLoadState.status === 'loaded' ? routeLoadState.route : null;
-  const activePreviewRoute = rideHistory.selectedRide?.route ?? importedRoute ?? null;
+  const activePreviewRoute = (rideSnapshot.status === 'active' || rideSnapshot.status === 'paused' || rideSnapshot.status === 'recoveryNeeded')
+    ? importedRoute
+    : rideHistory.selectedRide?.route ?? importedRoute ?? null;
   const {
     savedMapAreas,
     mapPackCheck,
@@ -243,6 +254,20 @@ export function RoutePreviewScreen() {
   const rideIsOpen = rideSnapshot.status === 'active' ||
     rideSnapshot.status === 'paused' ||
     rideSnapshot.status === 'recoveryNeeded';
+  const currentRideRef = useRef(rideSnapshot);
+  const routeSelectionRevision = useRef(0);
+  currentRideRef.current = rideSnapshot;
+  useEffect(() => {
+    if (!rideIsOpen || !rideSnapshot.rideId) return;
+    let cancelled = false;
+    const selectionRevision = routeSelectionRevision.current;
+    loadActiveRideRoute(rideSnapshot.rideId).then(route => {
+      if (!cancelled && route && selectionRevision === routeSelectionRevision.current) setRouteLoadState({ status: 'loaded', route });
+    }).catch(() => {
+      if (!cancelled) Alert.alert('Rute belum dapat dipulihkan', 'Rekaman perjalanan tetap tersedia. Impor kembali rute untuk melanjutkan navigasi.');
+    });
+    return () => { cancelled = true; };
+  }, [rideIsOpen, rideSnapshot.rideId]);
   const currentBottomPadding = useMemo(() => {
     if (rideIsOpen) {
       return Math.max(dashboardHeight + 16, 120);
@@ -331,6 +356,7 @@ export function RoutePreviewScreen() {
     () => (activePreviewRoute ? analyzeRouteElevation(activePreviewRoute) : null),
     [activePreviewRoute],
   );
+  const routeHasElevationProfile = (routeElevationAnalysis?.samples.filter(sample => sample.elevationMeters !== null).length ?? 0) >= 2;
   const gradientRouteFeature = useMemo(() => {
     if (
       routeElevationAnalysis &&
@@ -406,20 +432,27 @@ export function RoutePreviewScreen() {
         totalClimbs: 0,
       };
     }
-    return findClimbStateForRider(activeRiderCoordinate, routeElevationAnalysis);
-  }, [routeElevationAnalysis, activeRiderCoordinate]);
+    return findClimbStateForRider(rideIsOpen && !rideHasFreshFix ? null : activeRiderCoordinate, routeElevationAnalysis);
+  }, [routeElevationAnalysis, activeRiderCoordinate, rideIsOpen, rideHasFreshFix]);
 
   const routeCoordinates = useMemo(() => {
     if (!activePreviewRoute) return [];
     return activePreviewRoute.segments.flatMap(segment => segment.points.map(p => p.coordinate));
   }, [activePreviewRoute]);
 
+  const distanceToFinishMeters = useMemo(() => {
+    if (!importedRoute || !routeElevationAnalysis || !rideHasFreshFix) return null;
+    return remainingRouteDistanceMeters(activeRiderCoordinate, routeElevationAnalysis);
+  }, [importedRoute, routeElevationAnalysis, rideHasFreshFix, activeRiderCoordinate]);
+
   const turnGuidance = useMemo(() => {
-    if (!importedRoute || routeCoordinates.length < 2) {
-      return null;
+    if (!importedRoute || routeCoordinates.length < 2 || (rideIsOpen && !rideHasFreshFix)) return null;
+    const instruction = getNavigationGuidance(routeCoordinates, activeRiderCoordinate);
+    if (instruction?.type === 'straight' && distanceToFinishMeters != null) {
+      return { ...instruction, distanceMeters: Math.round(distanceToFinishMeters) };
     }
-    return getNavigationGuidance(routeCoordinates, activeRiderCoordinate);
-  }, [importedRoute, routeCoordinates, activeRiderCoordinate]);
+    return instruction;
+  }, [importedRoute, routeCoordinates, activeRiderCoordinate, distanceToFinishMeters, rideIsOpen, rideHasFreshFix]);
 
   const audioCueManagerRef = useRef(new NavigationAudioCueManager());
   const [soundEnabled, setSoundEnabledState] = useState(isSoundEnabled());
@@ -427,6 +460,11 @@ export function RoutePreviewScreen() {
   const [endurancePeeking, setEndurancePeeking] = useState(false);
   const enduranceCovered = rideIsOpen && enduranceModeActive && !endurancePeeking;
   const mapVisible = appActive && !enduranceCovered;
+  const showFullScreenPanel = !rideIsOpen && !areaPickerOpen && (
+    activeTab === 'settings' ||
+    (activeTab === 'ride' && !showRideMap) ||
+    (activeTab === 'routes' && !showRouteMap)
+  );
   const lastMapView = useRef<{ context: string; view: Omit<ViewState, 'bounds'> } | null>(null);
   const mapContext = `${mapStyle}:${areaPickerOpen}:${activePreviewRoute?.sourceFileName ?? (activePreviewRoute ? activePreviewRoute.name : '')}`;
   const endurancePeekTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -468,17 +506,12 @@ export function RoutePreviewScreen() {
   }, []);
 
   const isOffRoute = useMemo(() => {
-    if (!rideIsOpen || !importedRoute || routeCoordinates.length < 2 || !activeRiderCoordinate) {
+    if (!rideIsOpen || !rideHasFreshFix || !importedRoute || !routeElevationAnalysis || !activeRiderCoordinate) {
       return false;
     }
-    let minDist = Infinity;
-    for (let i = 0; i < routeCoordinates.length; i++) {
-      const d = distanceBetweenCoords(activeRiderCoordinate, routeCoordinates[i]);
-      if (d < minDist) minDist = d;
-      if (minDist <= 55) return false;
-    }
-    return minDist > 55;
-  }, [rideIsOpen, importedRoute, routeCoordinates, activeRiderCoordinate]);
+    const distanceFromRoute = distanceFromRouteMeters(activeRiderCoordinate, routeElevationAnalysis);
+    return distanceFromRoute !== null && distanceFromRoute > 55;
+  }, [rideIsOpen, rideHasFreshFix, importedRoute, routeElevationAnalysis, activeRiderCoordinate]);
 
   useEffect(() => {
     if (!rideIsOpen) {
@@ -521,10 +554,7 @@ export function RoutePreviewScreen() {
         turnGuidance.type !== 'straight' &&
         turnGuidance.type !== 'finish' &&
         turnGuidance.distanceMeters <= 180;
-      const hasClimbEvent =
-        effectiveClimbType === 'upcoming' || effectiveClimbType === 'active';
-
-      if (hasUpcomingTurn || hasClimbEvent || isOffRoute) {
+      if (hasUpcomingTurn || isOffRoute) {
         if (!endurancePeeking) {
           setEndurancePeeking(true);
         }
@@ -782,6 +812,11 @@ export function RoutePreviewScreen() {
           return;
         }
 
+        if (routeBackRide.rideId) {
+          await saveActiveRideRoute(routeBackRide.rideId, routeToReturn);
+          routeSelectionRevision.current += 1;
+        }
+
         const activeRideCoordinate = routeBackRide.lastCoordinate ?? currentPosition?.coordinate;
         if (activeRideCoordinate) {
           applyCameraStop({
@@ -896,6 +931,8 @@ export function RoutePreviewScreen() {
 
   function selectMainTab(tab: MainTab) {
     setActiveTab(tab);
+    setShowRideMap(false);
+    setShowRouteMap(false);
     setAreaPickerOpen(tab === 'maps');
   }
 
@@ -949,6 +986,67 @@ export function RoutePreviewScreen() {
             : 'GPX tidak dapat dibaca. Pilih file lain.',
       });
     }
+  }
+
+  function confirmRideRoute(route: GpxRoute) {
+    const rideAtSelection = currentRideRef.current;
+    const rideId = rideAtSelection.rideId;
+    if (!rideId || !['active', 'paused'].includes(rideAtSelection.status)) return;
+    const riderCoordinate = rideAtSelection.lastCoordinate;
+    const nearestDistance = riderCoordinate ? distanceFromRouteMeters(riderCoordinate, analyzeRouteElevation(route)) : null;
+    const distanceNotice = nearestDistance != null && nearestDistance > 100
+      ? `\nPosisi sekitar ${Math.round(nearestDistance)} m dari rute. Jalur penghubung tidak dibuat otomatis.`
+      : '';
+    Alert.alert('Gunakan tujuan ini?', `${route.name} · ${(route.distanceMeters / 1000).toFixed(1).replace('.', ',')} km${distanceNotice}\nRekaman perjalanan tetap berlanjut.`, [
+      { text: 'Batal', style: 'cancel' },
+      { text: 'Gunakan rute', onPress: async () => {
+        if (currentRideRef.current.rideId !== rideId || !['active', 'paused'].includes(currentRideRef.current.status)) return;
+        try {
+          await saveActiveRideRoute(rideId, route);
+          if (currentRideRef.current.rideId !== rideId || !['active', 'paused'].includes(currentRideRef.current.status)) return;
+          routeSelectionRevision.current += 1;
+          rideHistory.clearSelectedRide();
+          setRouteLoadState({ status: 'loaded', route });
+          setRouteBackActive(false);
+          setRouteBackSourceRoute(null);
+          setRideFollowing(true);
+          setActiveTab('ride');
+        } catch (error) {
+          Alert.alert('Rute belum dapat digunakan', error instanceof Error ? error.message : 'Rute gagal disimpan.');
+        }
+      } },
+    ]);
+  }
+
+  useEffect(() => {
+    if (!pendingRideRoute || gmapsModalVisible) return;
+    const timer = setTimeout(() => {
+      setPendingRideRoute(null);
+      confirmRideRoute(pendingRideRoute);
+    }, 500);
+    return () => clearTimeout(timer);
+  // The pending route is confirmed after the native modal closes.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingRideRoute, gmapsModalVisible]);
+
+  function chooseRideDestination() {
+    Alert.alert('Tambah tujuan', 'Pilih sumber rute. Rekaman perjalanan tetap berjalan.', [
+      { text: 'Batal', style: 'cancel' },
+      { text: 'File GPX', onPress: async () => {
+        try { confirmRideRoute(await pickAndImportGpxRoute()); }
+        catch (error) {
+          if (!(error instanceof GpxImportCanceledError)) Alert.alert('GPX belum dapat dibuka', error instanceof Error ? error.message : 'Coba pilih file lain.');
+        }
+      } },
+      { text: 'Link Google Maps', onPress: () => {
+        if (!rideHasFreshFix || !rideSnapshot.lastCoordinate) {
+          Alert.alert('Menunggu lokasi GPS', 'Tunggu lokasi terbaru sebelum membuat rute dari posisi saat ini.');
+          return;
+        }
+        setMapsImportDuringRide(true);
+        setGmapsModalVisible(true);
+      } },
+    ]);
   }
 
   function confirmClearGpxRoute() {
@@ -1023,22 +1121,18 @@ export function RoutePreviewScreen() {
 
     return (
       <View>
-        <View style={styles.homeBrandHeader}>
-          <Image
-            source={require('../../assets/app_icon.png')}
-            style={styles.homeBrandIcon}
-          />
-          <View style={styles.homeBrandTextCol}>
-            <Text style={styles.homeEyebrow}>CYCLECOMP · RIDE</Text>
-            <Text style={styles.homeTitle}>Siap bersepeda?</Text>
-          </View>
-        </View>
+        <Text style={styles.homeEyebrow}>CYCLECOMP · RIDE</Text>
+        <Text style={styles.homeTitle}>Siap bersepeda?</Text>
+        <Text style={styles.preparationStatus}>
+          {currentPosition ? `GPS ±${currentPosition.accuracyMeters} m` : 'GPS menunggu'} · {readyMapAreas.length} area peta siap
+        </Text>
         {importedRoute ? (
           <View style={styles.homeRouteCard}>
             <View style={styles.homeRouteText}>
+              <Text style={styles.preparationCardLabel}>RUTE AKTIF</Text>
               <Text numberOfLines={1} style={styles.homeRouteName}>{importedRoute.name}</Text>
               <Text style={styles.homeRouteFacts}>
-                {formatDistance(importedRoute.distanceMeters)} · +{routeElevationAnalysis?.totalAscentMeters ?? 0} m
+                {formatDistance(importedRoute.distanceMeters)} · {routeHasElevationProfile && routeElevationAnalysis ? `+${routeElevationAnalysis.totalAscentMeters} m` : 'Elevasi —'}
               </Text>
             </View>
             <Text style={routeHasOfflineMap ? styles.homeReadyLabel : styles.homeNeedsMapLabel}>
@@ -1046,9 +1140,11 @@ export function RoutePreviewScreen() {
             </Text>
           </View>
         ) : (
-          <Text style={styles.homeDescription}>
-            Pilih rute GPX untuk navigasi, atau mulai merekam perjalanan bebas.
-          </Text>
+          <View style={styles.preparationEmptyRoute}>
+            <Text style={styles.preparationCardLabel}>RUTE AKTIF</Text>
+            <Text style={styles.preparationEmptyTitle}>Belum ada rute</Text>
+            <Text style={styles.homeDescription}>Pilih GPX untuk navigasi, atau mulai ride bebas saat peta siap.</Text>
+          </View>
         )}
         {routeIsReady && !routeHasOfflineMap ? (
           <ImportButton label="Siapkan peta offline untuk rute" onPress={() => selectMainTab('maps')} variant="secondary" />
@@ -1074,6 +1170,9 @@ export function RoutePreviewScreen() {
             <Text style={styles.homeMapNoticeText}>Unduh area sebelum mulai ride.</Text>
           </Pressable>
         ) : null}
+        <Pressable accessibilityRole="button" accessibilityLabel={showRideMap ? 'Kembali ke persiapan' : 'Lihat peta'} onPress={() => setShowRideMap(!showRideMap)} style={styles.preparationMapButton}>
+          <Text style={styles.preparationMapButtonText}>{showRideMap ? 'Kembali ke persiapan' : 'Lihat peta'}</Text>
+        </Pressable>
         {rideError ? <Text style={styles.mapPackError}>{rideError}</Text> : null}
       </View>
     );
@@ -1082,36 +1181,50 @@ export function RoutePreviewScreen() {
   function renderSettingsPanel() {
     return (
       <View>
-        <View style={styles.appBrandingCard}>
-          <Image
-            source={require('../../assets/app_icon.png')}
-            style={styles.appBrandingLogo}
-          />
-          <View style={styles.appBrandingDetails}>
-            <Text style={styles.appBrandingTitle}>CycleComp</Text>
-            <Text style={styles.appBrandingSubtitle}>GPS & Offline Terrain Computer</Text>
-            <Text style={styles.appBrandingMeta}>v0.0.1 (Build 1) · Standalone AMOLED Engine</Text>
-          </View>
-        </View>
-
-        <Text style={styles.homeEyebrow}>PREFERENSI RIDE</Text>
         <Text style={styles.homeTitle}>Setelan</Text>
+        <Text style={styles.preparationStatus}>Preferensi dan data offline</Text>
+        <Text style={styles.settingsSectionTitle}>RIDE</Text>
+        {Platform.OS === 'ios' ? (
+          <View style={styles.watchHeartRateRow}>
+            <View style={styles.watchHeartRateDescription}>
+              <Text style={styles.watchHeartRateTitle}>Estimasi power</Text>
+              <Text style={styles.watchHeartRateHint}>
+                {rideSnapshot.virtualPowerMassKg ? `Berat rider dan sepeda: ${rideSnapshot.virtualPowerMassKg} kg.` : 'Masukkan berat gabungan rider dan sepeda.'} Atur sebelum ride. Estimasi tidak mengetahui angin atau coasting. Power ikut dalam GPX dan dapat dianggap terukur oleh Strava.
+              </Text>
+            </View>
+            <Pressable accessibilityRole="button" accessibilityLabel="Atur berat untuk estimasi power" accessibilityState={{ disabled: rideBusy || rideChecking || rideIsOpen }} disabled={rideBusy || rideChecking || rideIsOpen} onPress={() => {
+              Alert.prompt('Berat total (kg)', 'Masukkan berat rider, sepeda, dan perlengkapan. Masukkan 0 untuk mematikan estimasi.', [
+                { text: 'Batal', style: 'cancel' },
+                { text: 'Simpan', onPress: text => {
+                  const massKg = Number((text ?? '').replace(',', '.').trim());
+                  if (!text?.trim() || !Number.isFinite(massKg) || (massKg !== 0 && (massKg < 30 || massKg > 250))) {
+                    Alert.alert('Berat tidak valid', 'Masukkan 30–250 kg, atau 0 untuk mematikan.');
+                    return;
+                  }
+                  setVirtualPowerMass(massKg);
+                } },
+              ], 'plain-text', rideSnapshot.virtualPowerMassKg ? String(rideSnapshot.virtualPowerMassKg) : '', 'decimal-pad');
+            }} style={[styles.virtualPowerButton, (rideBusy || rideChecking || rideIsOpen) && { opacity: 0.5 }]}>
+              <Text style={styles.watchHeartRateTitle}>Atur</Text>
+            </Pressable>
+          </View>
+        ) : null}
         <View style={styles.watchHeartRateRow}>
           <View style={styles.watchHeartRateDescription}>
             <Text style={styles.watchHeartRateTitle}>HR · realme Watch 5</Text>
             <Text style={styles.watchHeartRateHint}>
-              {rideSnapshot.watchHeartRateMessage ?? (
+              {watchPermissionError ?? rideSnapshot.watchHeartRateMessage ?? (
                 rideSnapshot.watchHeartRateEnabled
                   ? rideSnapshot.watchHeartRateStatus === 'ready'
                     ? 'Jam siap. Mulai Outdoor Cycle di jam dulu, lalu tap Mulai di CycleComp.'
                     : 'Menyiapkan koneksi jam…'
-                  : 'Mulai Outdoor Cycle di jam tangan terlebih dahulu, lalu CycleComp akan membaca HR.'
-              )}
+                  : 'Mulai Outdoor Cycle di jam sebelum ride.'
+                )}
             </Text>
           </View>
-          <Switch
+          <AmoledSwitch
             accessibilityLabel="Gunakan HR realme Watch 5 selama ride"
-            disabled={rideBusy || rideChecking || rideSnapshot.watchHeartRateStatus === 'stopping'}
+            disabled={rideBusy || rideChecking || rideIsOpen || rideSnapshot.watchHeartRateStatus === 'stopping'}
             value={rideSnapshot.watchHeartRateEnabled ?? false}
             onValueChange={enabled => { setWatchHeartRateEnabled(enabled); }}
           />
@@ -1120,10 +1233,10 @@ export function RoutePreviewScreen() {
           <View style={styles.watchHeartRateDescription}>
             <Text style={styles.watchHeartRateTitle}>Auto-pause</Text>
             <Text style={styles.watchHeartRateHint}>
-              Menjeda setelah berhenti terkonfirmasi dari lokasi dan, bila tersedia, aktivitas gerak. Lanjut setelah perpindahan terkonfirmasi.
+              Jeda saat berhenti dan lanjut setelah gerak terkonfirmasi.
             </Text>
           </View>
-          <Switch
+          <AmoledSwitch
             accessibilityLabel="Auto-pause perjalanan"
             disabled={rideBusy || rideChecking}
             value={rideSnapshot.autoPauseEnabled ?? false}
@@ -1134,10 +1247,10 @@ export function RoutePreviewScreen() {
           <View style={styles.watchHeartRateDescription}>
             <Text style={styles.watchHeartRateTitle}>Diagnostik sensor</Text>
             <Text style={styles.watchHeartRateHint}>
-              Rekam lokasi tepat, kualitas GPS, dan ringkasan gerak untuk memeriksa speed dan auto-pause. File lokal maksimal 10 MB; bagikan hanya saat diperlukan.
+              Rekam lokasi tepat dan data sensor untuk diagnosis. File lokal maksimal 10 MB.
             </Text>
           </View>
-          <Switch
+          <AmoledSwitch
             accessibilityLabel="Rekam diagnostik sensor selama ride"
             disabled={rideBusy || rideChecking || rideIsOpen}
             value={rideSnapshot.sensorDiagnosticsEnabled ?? false}
@@ -1147,10 +1260,11 @@ export function RoutePreviewScreen() {
         <View style={styles.watchHeartRateRow}>
           <View style={styles.watchHeartRateDescription}>
             <Text style={styles.watchHeartRateTitle}>Suara navigasi</Text>
-            <Text style={styles.watchHeartRateHint}>Petunjuk belokan dan peringatan saat berkendara.</Text>
+            <Text style={styles.watchHeartRateHint}>Nada dan getaran untuk petunjuk navigasi.</Text>
           </View>
-          <Switch accessibilityLabel="Suara navigasi" value={soundEnabled} onValueChange={handleToggleSound} />
+          <AmoledSwitch accessibilityLabel="Suara navigasi" value={soundEnabled} onValueChange={handleToggleSound} />
         </View>
+        <Text style={styles.settingsSectionTitle}>DATA & INTEGRASI</Text>
         <Pressable
           accessibilityLabel="Kelola peta offline"
           accessibilityRole="button"
@@ -1165,14 +1279,21 @@ export function RoutePreviewScreen() {
           </View>
           <Text style={styles.settingsMapAction}>Kelola ›</Text>
         </Pressable>
-        <Text style={[styles.homeEyebrow, { marginTop: 14 }]}>INTEGRASI STRAVA</Text>
+        <TerrainPackManager mapAreaBounds={readyMapAreas.map(area => area.bounds)} />
         <StravaSettingsCard
           isConnected={strava.isConnected}
           athlete={strava.athlete}
           onConnect={strava.connect}
           onDisconnect={strava.disconnect}
         />
-        <TerrainPackManager mapAreaBounds={readyMapAreas.map(area => area.bounds)} />
+        <View style={styles.appBrandingCard}>
+          <Image source={require('../../assets/app_icon.png')} style={styles.appBrandingLogo} />
+          <View style={styles.appBrandingDetails}>
+            <Text style={styles.appBrandingTitle}>CycleComp</Text>
+            <Text style={styles.appBrandingSubtitle}>GPS & Offline Terrain Computer</Text>
+            <Text style={styles.appBrandingMeta}>v0.0.1 (Build 1) · Standalone AMOLED Engine</Text>
+          </View>
+        </View>
       </View>
     );
   }
@@ -1381,14 +1502,20 @@ export function RoutePreviewScreen() {
       ) : null}
 
       {/* Top Floating Header Pill */}
-      {!areaPickerOpen ? (
+      {!areaPickerOpen && !showFullScreenPanel ? (
         <SafeAreaView edges={['top']} pointerEvents="box-none" style={styles.topHudContainer}>
           {rideIsOpen ? (
             <NavigationGuidanceBanner
               instruction={turnGuidance}
+              isOffRoute={isOffRoute}
+              waitingForGps={!rideHasFreshFix}
               climbAlert={climbAlert}
+              routeSamples={routeElevationAnalysis?.samples}
               routeName={importedRoute ? importedRoute.name : undefined}
+              hasRoute={importedRoute !== null}
+              distanceToFinishMeters={distanceToFinishMeters}
               isPaused={rideSnapshot.status === 'paused'}
+              needsRecovery={rideSnapshot.status === 'recoveryNeeded'}
               accuracyMeters={rideSnapshot.horizontalAccuracyMeters}
               soundEnabled={soundEnabled}
               onToggleSound={handleToggleSound}
@@ -1433,6 +1560,7 @@ export function RoutePreviewScreen() {
             ? rideSnapshot.liveGradeSource ?? null
             : null}
           climbAlert={climbAlert}
+          routeSamples={routeElevationAnalysis?.samples}
           povMode={povMode}
           onTogglePov={togglePovMode}
           enduranceActive={enduranceModeActive}
@@ -1443,6 +1571,7 @@ export function RoutePreviewScreen() {
           }
           routeBackBusy={routeBackBusy}
           onRouteBack={startRouteBack}
+          onAddDestination={rideSnapshot.status === 'active' || rideSnapshot.status === 'paused' ? chooseRideDestination : undefined}
           onRecenter={() => {
             setRideFollowing(true);
             const target = rideSnapshot.lastCoordinate ?? currentPosition?.coordinate;
@@ -1684,8 +1813,8 @@ export function RoutePreviewScreen() {
           </View>
         </View>
       ) : lastFinishedRide ? null : (
-        <View pointerEvents="box-none" style={styles.bottomSheetContainer}>
-          <View
+        <View pointerEvents="box-none" style={[styles.bottomSheetContainer, showFullScreenPanel && styles.fullScreenContainer]}>
+          {!showFullScreenPanel ? <View
             pointerEvents="box-none"
             style={styles.mapControlsRow}
           >
@@ -1718,20 +1847,21 @@ export function RoutePreviewScreen() {
                 square
               />
             </View>
-          </View>
+          </View> : null}
           <View
             onLayout={event => {
               const panelHeight = event.nativeEvent.layout.height;
-              if (panelHeight > 0) setIdlePanelHeight(panelHeight);
+              if (panelHeight > 0 && !showFullScreenPanel) setIdlePanelHeight(panelHeight);
             }}
             style={[
               styles.bottomSheetCard,
               styles.mainTabPanel,
-              { paddingBottom: Math.max(insets.bottom, 12) },
+              showFullScreenPanel && styles.fullScreenPanel,
+              { paddingBottom: Math.max(insets.bottom, 12), paddingTop: showFullScreenPanel ? Math.max(insets.top, 20) + 16 : 12 },
             ]}
           >
             <ScrollView
-              style={{ maxHeight: windowHeight * 0.48 }}
+              style={showFullScreenPanel ? styles.fullScreenScroll : { maxHeight: windowHeight * (showRouteMap ? 0.38 : activeTab === 'ride' ? 0.48 : 0.7) }}
               contentContainerStyle={styles.mainTabContent}
               showsVerticalScrollIndicator={false}
             >
@@ -1755,7 +1885,7 @@ export function RoutePreviewScreen() {
             </Text>
             <Text style={styles.stateDescription}>
               {lastFinishedRide.fileUrl
-                ? `${formatDistance(lastFinishedRide.distanceMeters ?? 0)} direkam dari ${lastFinishedRide.pointCount ?? 0} titik. File tersedia di Files → Di iPhone Saya → CycleComp → Rides.`
+                ? `${formatDistance(lastFinishedRide.distanceMeters ?? 0)} direkam dari ${lastFinishedRide.pointCount ?? 0} titik. ${Platform.OS === 'ios' ? 'File tersedia di Files → Di iPhone Saya → CycleComp → Rides.' : 'GPX tersimpan di penyimpanan CycleComp. Gunakan Bagikan GPX untuk mengekspor salinan.'}`
                 : 'Perjalanan selesai tanpa posisi yang layak direkam, jadi GPX kosong tidak dibuat.'}
             </Text>
             <View style={styles.modalActionsContainer}>
@@ -1763,11 +1893,15 @@ export function RoutePreviewScreen() {
                 <>
                   <ImportButton
                     label="Bagikan GPX"
-                    hint="Pilih Simpan ke File untuk mengunggah rekaman ini ke Strava"
+                    hint={Platform.OS === 'ios'
+                      ? 'Pilih Simpan ke File untuk mengunggah rekaman ini ke Strava'
+                      : 'Bagikan GPX untuk mengekspor salinan yang bisa dipilih saat mengunggah ke Strava'}
                     onPress={shareFinishedRide}
                   />
                   <Text style={styles.stateDescription}>
-                    Untuk Strava, pilih file GPX di CycleComp → Rides pada halaman unggah. Jika folder belum terlihat, simpan dulu lewat Bagikan GPX → Simpan ke File. Setelah masuk Strava, pilih jenis aktivitas Ride lalu simpan.
+                    {Platform.OS === 'ios'
+                      ? 'Untuk Strava, pilih file GPX di CycleComp → Rides pada halaman unggah. Jika folder belum terlihat, simpan dulu lewat Bagikan GPX → Simpan ke File. Setelah masuk Strava, pilih jenis aktivitas Ride lalu simpan.'
+                      : 'Untuk Strava, bagikan GPX untuk mengekspor salinan, lalu pilih file itu di halaman unggah. Setelah masuk Strava, pilih jenis aktivitas Ride lalu simpan.'}
                   </Text>
                   <ImportButton
                     label="Buka unggah Strava"
@@ -1813,14 +1947,19 @@ export function RoutePreviewScreen() {
 
       <GmapsLinkModal
         visible={gmapsModalVisible}
-        onClose={() => setGmapsModalVisible(false)}
+        onClose={() => { setGmapsModalVisible(false); setMapsImportDuringRide(false); }}
         onRouteCreated={route => {
+          if (mapsImportDuringRide) {
+            setPendingRideRoute(route);
+            return;
+          }
           setRouteLoadState({ status: 'loaded', route });
           setRouteBackActive(false);
           setRouteBackSourceRoute(null);
           setActiveTab('routes');
         }}
-        userCoordinate={currentPosition?.coordinate}
+        userCoordinate={mapsImportDuringRide ? rideSnapshot.lastCoordinate : currentPosition?.coordinate}
+        startFromCurrentPosition={mapsImportDuringRide}
       />
 
       <EnduranceScreenOverlay
@@ -1838,6 +1977,7 @@ export function RoutePreviewScreen() {
           Date.now() - Date.parse(rideSnapshot.heartRateRecordedAt) >= 0 &&
           Date.now() - Date.parse(rideSnapshot.heartRateRecordedAt) <= 15000
           ? rideSnapshot.heartRateBpm : null}
+        virtualPowerWatts={rideSnapshot.status === 'active' && !rideSnapshot.autoPaused && rideHasFreshFix ? rideSnapshot.virtualPowerWatts : null}
         elapsedSeconds={rideElapsedSeconds(rideSnapshot)}
         distanceMeters={rideSnapshot.distanceMeters}
         movingSeconds={rideSnapshot.movingSeconds}
@@ -1850,8 +1990,10 @@ export function RoutePreviewScreen() {
           : null}
         routeProfileAvailable={(routeElevationAnalysis?.climbs.length ?? 0) > 0}
         turnInstruction={turnGuidance}
+        hasRoute={importedRoute !== null}
+        distanceToFinishMeters={distanceToFinishMeters}
         climbAlert={climbAlert}
-        terrainClimbStatus={rideSnapshot.terrainClimbStatus}
+        terrainClimbStatus={rideSnapshot.status === 'active' && !rideSnapshot.autoPaused && rideHasFreshFix ? rideSnapshot.terrainClimbStatus : null}
         terrainClimbDistanceToStartMeters={rideSnapshot.terrainClimbDistanceToStartMeters}
         terrainClimbAverageGradePercent={rideSnapshot.terrainClimbAverageGradePercent}
         onWakeUp={handleWakeUpEndurance}
@@ -1903,10 +2045,23 @@ export function RoutePreviewScreen() {
           </Pressable>
         </View>
 
+        {activePreviewRoute ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={showRouteMap ? 'Kembali ke detail rute' : 'Lihat rute di peta'}
+            onPress={() => setShowRouteMap(!showRouteMap)}
+            style={styles.routeMapToggle}
+          >
+            <Text style={styles.routeMapToggleText}>{showRouteMap ? 'Kembali ke detail rute' : 'Lihat rute di peta'}</Text>
+          </Pressable>
+        ) : null}
+
         {routeSubTab === 'history' ? (
           <RideHistoryPanel
             rides={rideHistory.rides}
             loading={rideHistory.loading}
+            error={rideHistory.error}
+            onRetry={() => { rideHistory.loadRides(); }}
             selectedRide={rideHistory.selectedRide}
             loadingSelected={rideHistory.loadingSelected}
             onSelectRide={async (file) => {
@@ -1918,11 +2073,13 @@ export function RoutePreviewScreen() {
               }
             }}
             onFocusRoute={(route) => {
+              setShowRouteMap(true);
               setPreviewFollowing(false);
               pendingCenterOnUser.current = false;
               fitRouteBounds(route.bounds);
             }}
             onClearSelectedRide={() => {
+              setShowRouteMap(false);
               rideHistory.clearSelectedRide();
               if (importedRoute) {
                 fitRouteBounds(importedRoute.bounds);
@@ -2080,13 +2237,12 @@ export function RoutePreviewScreen() {
               }
               unit={route.minimumElevationMeters !== null ? 'm' : undefined}
             />
-            {routeElevationAnalysis ? (
-              <RouteFact
-                label="Total naik"
-                value={`+${routeElevationAnalysis.totalAscentMeters}`}
-                unit="m"
-              />
-            ) : null}
+            <RouteFact
+              label="Total naik"
+              value={routeHasElevationProfile && routeElevationAnalysis
+                ? `+${routeElevationAnalysis.totalAscentMeters}` : '—'}
+              unit={routeHasElevationProfile && routeElevationAnalysis ? 'm' : undefined}
+            />
           </View>
           {terrainElevationNote ? (
             <Text
@@ -2098,7 +2254,7 @@ export function RoutePreviewScreen() {
               {terrainElevationNote}
             </Text>
           ) : null}
-          {routeElevationAnalysis && routeElevationAnalysis.samples.length > 0 ? (
+          {routeHasElevationProfile && routeElevationAnalysis ? (
             <View style={styles.elevationChartContainer}>
               <View style={styles.elevationChartHeaderRow}>
                 <Text style={styles.technicalLabel}>PROFIL ELEVASI RUTE</Text>
@@ -2118,6 +2274,7 @@ export function RoutePreviewScreen() {
               maxGradePercent={routeElevationAnalysis.maxGradePercent}
               totalAscentMeters={routeElevationAnalysis.totalAscentMeters}
               onSelectClimb={climb => {
+                setShowRouteMap(true);
                 applyCameraStop({
                   center: climb.startCoordinate,
                   zoom: 15,
@@ -2238,6 +2395,7 @@ export function RoutePreviewScreen() {
 
     return (
       <View>
+        <Text style={styles.homeTitle}>Tambah rute</Text>
         <View style={styles.emptyStateHeaderRow}>
           <Text style={styles.stateTitle}>Belum ada rute</Text>
         </View>
@@ -2512,7 +2670,7 @@ function MainTabBar({
   onSelect: (tab: MainTab) => void;
 }) {
   return (
-    <View accessibilityRole="tabbar" style={styles.mainTabBar}>
+    <View accessibilityRole="tablist" style={styles.mainTabBar}>
       {MAIN_TABS.map(tab => {
         const selected = activeTab === tab.id;
         return (
@@ -2571,6 +2729,10 @@ function ImportButton({
 }
 
 function formatDistance(distanceMeters: number) {
+  if (distanceMeters < 1_000) {
+    return `${Math.round(distanceMeters).toLocaleString('id-ID')} m`;
+  }
+
   return `${(distanceMeters / 1000).toLocaleString('id-ID', {
     maximumFractionDigits: 1,
     minimumFractionDigits: 1,
@@ -2628,14 +2790,15 @@ function terrainElevationEnrichmentMessage(
 }
 
 const styles = StyleSheet.create({
+  virtualPowerButton: { minHeight: 48, justifyContent: 'center', paddingHorizontal: 12, borderWidth: 1, borderColor: AmoledTheme.borderDefault, borderRadius: 12 },
   watchHeartRateRow: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
     marginBottom: 16, paddingVertical: 12,
     borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: AmoledTheme.borderDefault,
   },
   watchHeartRateDescription: { flex: 1 },
-  watchHeartRateTitle: { color: AmoledTheme.textPrimary, fontSize: 15, fontWeight: '600' },
-  watchHeartRateHint: { color: AmoledTheme.textSecondary, fontSize: 12, lineHeight: 18, marginTop: 4 },
+  watchHeartRateTitle: { color: AmoledTheme.textPrimary, fontSize: 17, fontWeight: '600' },
+  watchHeartRateHint: { color: AmoledTheme.textSecondary, fontSize: 14, lineHeight: 20, marginTop: 4 },
 
   screen: {
     backgroundColor: AmoledTheme.background,
@@ -2809,6 +2972,64 @@ const styles = StyleSheet.create({
   mainTabPanel: {
     paddingTop: 12,
   },
+  fullScreenContainer: {
+    top: 0,
+  },
+  fullScreenPanel: {
+    borderTopWidth: 0,
+    borderRadius: 0,
+    flex: 1,
+    shadowOpacity: 0,
+  },
+  fullScreenScroll: {
+    flex: 1,
+  },
+  preparationStatus: {
+    color: AmoledTheme.textSecondary,
+    fontSize: 16,
+    lineHeight: 22,
+    marginBottom: 24,
+  },
+  preparationEmptyRoute: {
+    backgroundColor: AmoledTheme.surfaceElevated,
+    borderColor: AmoledTheme.borderDefault,
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    marginBottom: 8,
+    padding: 20,
+  },
+  preparationCardLabel: {
+    color: AmoledTheme.textSecondary,
+    fontSize: 14,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    marginBottom: 8,
+  },
+  preparationEmptyTitle: {
+    color: AmoledTheme.textPrimary,
+    fontSize: 22,
+    fontWeight: '700',
+    marginBottom: 6,
+  },
+  preparationMapButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 48,
+    marginTop: 12,
+  },
+  preparationMapButtonText: {
+    color: AmoledTheme.accentOrange,
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  settingsSectionTitle: {
+    color: AmoledTheme.textSecondary,
+    fontSize: 14,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    marginTop: 12,
+    marginBottom: 8,
+  },
   mainTabContent: {
     paddingBottom: 12,
   },
@@ -2838,7 +3059,7 @@ const styles = StyleSheet.create({
   },
   mainTabLabel: {
     color: AmoledTheme.textSecondary,
-    fontSize: 13,
+    fontSize: 15,
     fontWeight: '600',
   },
   mainTabLabelSelected: {
@@ -2908,6 +3129,8 @@ const styles = StyleSheet.create({
     padding: 3,
   },
   segmentButton: {
+    minHeight: 48,
+    justifyContent: 'center',
     alignItems: 'center',
     borderRadius: 9,
     flex: 1,
@@ -2922,7 +3145,7 @@ const styles = StyleSheet.create({
   },
   segmentButtonText: {
     color: AmoledTheme.textSecondary,
-    fontSize: 13,
+    fontSize: 15,
     fontWeight: '600',
   },
   segmentButtonTextActive: {
@@ -2938,14 +3161,14 @@ const styles = StyleSheet.create({
   },
   homeTitle: {
     color: AmoledTheme.textPrimary,
-    fontSize: 24,
+    fontSize: 28,
     fontWeight: '700',
     marginBottom: 10,
     marginTop: 3,
   },
   homeDescription: {
     color: AmoledTheme.textSecondary,
-    fontSize: 14,
+    fontSize: 16,
     lineHeight: 20,
     marginBottom: 12,
   },
@@ -2967,12 +3190,12 @@ const styles = StyleSheet.create({
   },
   homeRouteName: {
     color: AmoledTheme.textPrimary,
-    fontSize: 15,
+    fontSize: 22,
     fontWeight: '700',
   },
   homeRouteFacts: {
     color: AmoledTheme.textSecondary,
-    fontSize: 12,
+    fontSize: 16,
     marginTop: 4,
   },
   homeReadyLabel: {
@@ -3008,7 +3231,7 @@ const styles = StyleSheet.create({
   },
   homeSecondaryButtonText: {
     color: AmoledTheme.textPrimary,
-    fontSize: 12,
+    fontSize: 15,
     fontWeight: '600',
   },
   homeMapNotice: {
@@ -3180,8 +3403,23 @@ const styles = StyleSheet.create({
   },
   routeFacts: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 8,
     marginTop: 12,
+  },
+  routeMapToggle: {
+    alignItems: 'center',
+    borderColor: AmoledTheme.borderDefault,
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    justifyContent: 'center',
+    marginBottom: 14,
+    minHeight: 48,
+  },
+  routeMapToggleText: {
+    color: AmoledTheme.accentOrange,
+    fontSize: 16,
+    fontWeight: '700',
   },
   terrainElevationNote: {
     color: AmoledTheme.textSecondary,
@@ -3199,9 +3437,9 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: StyleSheet.hairlineWidth,
     flex: 1,
-    height: 58,
+    minHeight: 82,
     justifyContent: 'center',
-    minWidth: 0,
+    minWidth: '46%',
     paddingHorizontal: 4,
     paddingVertical: 6,
   },
@@ -3213,20 +3451,20 @@ const styles = StyleSheet.create({
   },
   routeFactValue: {
     color: AmoledTheme.textPrimary,
-    fontSize: 15,
+    fontSize: 24,
     fontVariant: ['tabular-nums'],
     fontWeight: '700',
     letterSpacing: -0.3,
   },
   routeFactUnit: {
     color: AmoledTheme.textSecondary,
-    fontSize: 10,
+    fontSize: 14,
     fontWeight: '600',
     marginLeft: 1.5,
   },
   routeFactLabel: {
     color: AmoledTheme.textSecondary,
-    fontSize: 10.5,
+    fontSize: 14,
     fontWeight: '500',
     marginTop: 2,
     textAlign: 'center',
@@ -3362,8 +3600,8 @@ const styles = StyleSheet.create({
   },
   routeDirectionFootnote: {
     color: AmoledTheme.textSecondary,
-    fontSize: 11,
-    lineHeight: 15,
+    fontSize: 14,
+    lineHeight: 20,
     marginTop: 7,
   },
   clearRouteButton: {
@@ -3433,7 +3671,7 @@ const styles = StyleSheet.create({
   },
   storageSummaryText: {
     color: AmoledTheme.textSecondary,
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '600',
   },
   savedAreasSection: {
@@ -3444,14 +3682,14 @@ const styles = StyleSheet.create({
   },
   selectedAreaBounds: {
     color: AmoledTheme.textPrimary,
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '600',
     lineHeight: 17,
     marginTop: 8,
   },
   sectionHeaderTitle: {
     color: AmoledTheme.textSecondary,
-    fontSize: 11,
+    fontSize: 14,
     fontWeight: '700',
     letterSpacing: 0.5,
     marginBottom: 6,
@@ -3476,28 +3714,31 @@ const styles = StyleSheet.create({
   },
   savedAreaTitle: {
     color: AmoledTheme.textPrimary,
-    fontSize: 14,
+    fontSize: 18,
     fontWeight: '700',
   },
   savedAreaSubtitle: {
     color: AmoledTheme.textSecondary,
-    fontSize: 12,
+    fontSize: 15,
     marginTop: 2,
   },
   savedAreaBounds: {
     color: AmoledTheme.textTertiary,
-    fontSize: 11,
-    lineHeight: 15,
+    fontSize: 14,
+    lineHeight: 20,
     marginTop: 8,
   },
   savedAreaActions: {
     alignItems: 'center',
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 6,
     justifyContent: 'flex-end',
     marginTop: 10,
   },
   areaActionBtn: {
+    minHeight: 48,
+    minWidth: 70,
     alignItems: 'center',
     backgroundColor: AmoledTheme.surfaceInteractive,
     borderColor: AmoledTheme.borderDefault,
@@ -3515,10 +3756,12 @@ const styles = StyleSheet.create({
   },
   areaActionBtnText: {
     color: AmoledTheme.textPrimary,
-    fontSize: 12,
+    fontSize: 15,
     fontWeight: '600',
   },
   areaDeleteBtn: {
+    minHeight: 48,
+    minWidth: 70,
     alignItems: 'center',
     backgroundColor: 'rgba(239, 68, 68, 0.12)',
     borderColor: 'rgba(239, 68, 68, 0.35)',
@@ -3533,7 +3776,7 @@ const styles = StyleSheet.create({
   },
   areaDeleteBtnText: {
     color: AmoledTheme.accentRed,
-    fontSize: 12,
+    fontSize: 15,
     fontWeight: '600',
   },
   sourceFileName: {

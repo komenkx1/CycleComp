@@ -12,6 +12,7 @@ from pathlib import Path
 import queue
 import re
 import shutil
+import subprocess
 import tempfile
 import threading
 from typing import Any
@@ -23,6 +24,7 @@ from cyclecomp_terrain.distribution import TerrainPackDistribution
 from cyclecomp_terrain.grid_pack import build_elevation_grid_pack
 from cyclecomp_terrain.raster_elevation import RasterElevationStore
 from cyclecomp_terrain.regional_pipeline import MINIMUM_HEADROOM_BYTES, check_disk_headroom
+from cyclecomp_terrain.road_graph import NoRoadSegmentsError, _bounds_with_buffer
 from cyclecomp_terrain.signing import (
     _load_signing_key,
     sign_elevation_grid_pack,
@@ -219,6 +221,7 @@ class TerrainAreaBuildManager:
                 signing_key_path=self.signing_key_path,
                 signature_key_id=self.signature_key_id,
                 on_chunk_ready=lambda completed: self._record_chunk_progress(job_id, completed),
+                osm_road_source=self.region_config.get("osmRoadSource"),
             )
             catalog, catalog_signature = self._read_published_catalog(str(publication["catalogDigest"]))
         except Exception as error:
@@ -369,6 +372,10 @@ class TerrainAreaBuildManager:
             "releaseId": self.region_config["releaseId"],
             "signatureKeyId": self.signature_key_id,
         }
+        osm_road_source = self.region_config.get("osmRoadSource")
+        if osm_road_source is not None:
+            # A new OSM snapshot must not return an older completed job's packages.
+            release_identity["osmRoadSource"] = _osm_road_source_identity(osm_road_source)
         release_hash = hashlib.sha256(_canonical_json(release_identity)).hexdigest()[:32]
         return f"area-{release_hash}"
 
@@ -430,6 +437,15 @@ class TerrainAreaBuildManager:
             or not regions
         ):
             raise ValueError("terrain region config is invalid")
+        osm_road_source = config.get("osmRoadSource")
+        if osm_road_source is not None and (
+            not isinstance(osm_road_source, dict)
+            or not all(
+                isinstance(osm_road_source.get(field), str) and osm_road_source[field].strip()
+                for field in ("osmPbf", "osmSourceUrl", "osmSnapshotAt")
+            )
+        ):
+            raise ValueError("terrain region config osmRoadSource needs osmPbf, osmSourceUrl and osmSnapshotAt")
         for region in regions:
             if (
                 not isinstance(region, dict)
@@ -473,6 +489,7 @@ def build_terrain_area_release(
     signing_key_path: Path,
     signature_key_id: str,
     on_chunk_ready: Callable[[int], None] | None = None,
+    osm_road_source: dict[str, str] | None = None,
 ) -> dict[str, object]:
     if not regions or len(regions) > MAX_AREA_CHUNKS:
         raise TerrainAreaLimitError("terrain area has an unsupported number of chunks")
@@ -490,6 +507,7 @@ def build_terrain_area_release(
             signing_key_path,
             signature_key_id,
             on_chunk_ready,
+            osm_road_source,
         )
 
 
@@ -501,6 +519,7 @@ def _build_terrain_area_release_locked(
     signing_key_path: Path,
     signature_key_id: str,
     on_chunk_ready: Callable[[int], None] | None,
+    osm_road_source: dict[str, str] | None = None,
 ) -> dict[str, object]:
     signing_key = _load_signing_key(signing_key_path)
     public_key = signing_key.public_key().public_bytes(
@@ -514,9 +533,11 @@ def _build_terrain_area_release_locked(
     finally:
         terrain_store.close()
 
-    cache_version = hashlib.sha256(
-        f"{source_release_id}:{dataset_version}".encode("utf-8")
-    ).hexdigest()[:16]
+    cache_identity = f"{source_release_id}:{dataset_version}"
+    if osm_road_source is not None:
+        osm_identity = _osm_road_source_identity(osm_road_source)
+        cache_identity += f":{osm_identity['osmSourceUrl']}:{osm_identity['osmSnapshotAt']}"
+    cache_version = hashlib.sha256(cache_identity.encode("utf-8")).hexdigest()[:16]
     chunk_cache_root = distribution_path / ".chunk-cache" / cache_version / signature_key_id
     chunk_cache_root.mkdir(parents=True, exist_ok=True)
     _require_real_directory(chunk_cache_root, "terrain chunk cache")
@@ -565,6 +586,7 @@ def _build_terrain_area_release_locked(
             signature_key_id,
             trusted_keys,
             dataset_version,
+            osm_road_source,
         )
         return str(region["chunkId"])
 
@@ -593,7 +615,7 @@ def _build_terrain_area_release_locked(
         for worker_store in worker_stores:
             worker_store.close()
 
-    release_id = _area_release_id(source_release_id, signature_key_id, dataset_version, regions)
+    release_id = _area_release_id(source_release_id, signature_key_id, dataset_version, regions, osm_road_source)
     release_directory = distribution_path / "releases" / release_id
     release_directory.parent.mkdir(parents=True, exist_ok=True)
     _require_real_directory(release_directory.parent, "terrain releases directory")
@@ -627,12 +649,13 @@ def _build_cached_area_chunk(
     signature_key_id: str,
     trusted_keys: dict[str, bytes],
     dataset_version: str,
+    osm_road_source: dict[str, str] | None = None,
 ) -> None:
     cache_parent = cache_directory.parent
     staging_directory = Path(tempfile.mkdtemp(prefix=f".staging-{cache_directory.name}-", dir=cache_parent))
     package_directory = staging_directory / cache_directory.name
     try:
-        build_elevation_grid_pack(terrain_store, package_directory, pack_id, bounds)
+        _build_area_chunk_pack(terrain_store, package_directory, pack_id, bounds, osm_road_source)
         sign_elevation_grid_pack(package_directory, signing_key_path, signature_key_id)
         _verify_area_chunk(package_directory, pack_id, bounds, dataset_version, trusted_keys)
         for package_file in package_directory.iterdir():
@@ -646,6 +669,65 @@ def _build_cached_area_chunk(
     except Exception:
         shutil.rmtree(staging_directory, ignore_errors=True)
         raise
+
+
+def _build_area_chunk_pack(
+    terrain_store: RasterElevationStore,
+    package_directory: Path,
+    pack_id: str,
+    bounds: tuple[float, float, float, float],
+    osm_road_source: dict[str, str] | None,
+) -> None:
+    if osm_road_source is None:
+        build_elevation_grid_pack(terrain_store, package_directory, pack_id, bounds)
+        return
+    try:
+        with tempfile.TemporaryDirectory(prefix=".osm-clip-", dir=package_directory.parent) as clip_directory:
+            build_elevation_grid_pack(
+                terrain_store,
+                package_directory,
+                pack_id,
+                bounds,
+                osm_pbf_path=_clip_osm_pbf(Path(osm_road_source["osmPbf"]), bounds, Path(clip_directory)),
+                osm_source_url=osm_road_source["osmSourceUrl"],
+                osm_snapshot_at=osm_road_source["osmSnapshotAt"],
+            )
+    except NoRoadSegmentsError:
+        # Sea, forest or unmapped chunks still get elevation; a missing road graph is explicit in the manifest.
+        logger.info("Terrain chunk %s has no supported OSM roads; building grid only", pack_id)
+        build_elevation_grid_pack(terrain_store, package_directory, pack_id, bounds)
+
+
+def _clip_osm_pbf(
+    osm_pbf_path: Path,
+    bounds: tuple[float, float, float, float],
+    clip_directory: Path,
+) -> Path:
+    # Reading a national PBF through Python callbacks takes minutes per chunk; osmium-tool clips it in seconds.
+    osmium_executable = shutil.which("osmium")
+    if osmium_executable is None:
+        return osm_pbf_path
+    # Wider than the road graph's default 1 km buffer so complete ways and junctions survive the clip.
+    west, south, east, north = _bounds_with_buffer(bounds, 2_000)
+    clipped_path = clip_directory / "chunk.osm.pbf"
+    subprocess.run(
+        [
+            osmium_executable, "extract",
+            "--bbox", f"{west},{south},{east},{north}",
+            "--strategy", "complete_ways",
+            "--overwrite",
+            "--output", str(clipped_path),
+            str(osm_pbf_path),
+        ],
+        check=True,
+        capture_output=True,
+        timeout=600,
+    )
+    return clipped_path
+
+
+def _osm_road_source_identity(osm_road_source: dict[str, str]) -> dict[str, str]:
+    return {field: osm_road_source[field] for field in ("osmSourceUrl", "osmSnapshotAt")}
 
 
 def _verify_area_chunk(
@@ -731,13 +813,16 @@ def _area_release_id(
     signature_key_id: str,
     dataset_version: str,
     regions: Sequence[dict[str, Any]],
+    osm_road_source: dict[str, str] | None = None,
 ) -> str:
-    identity = {
+    identity: dict[str, object] = {
         "chunkIds": sorted(str(region["chunkId"]) for region in regions),
         "datasetVersion": dataset_version,
         "signatureKeyId": signature_key_id,
         "sourceReleaseId": source_release_id,
     }
+    if osm_road_source is not None:
+        identity["osmRoadSource"] = _osm_road_source_identity(osm_road_source)
     return f"area-{hashlib.sha256(_canonical_json(identity)).hexdigest()[:32]}"
 
 

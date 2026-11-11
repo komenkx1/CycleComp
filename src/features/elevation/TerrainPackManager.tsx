@@ -376,7 +376,6 @@ export function TerrainPackManager({ mapAreaBounds }: TerrainPackManagerProps) {
         style={({ pressed }) => [styles.heading, pressed && styles.pressed]}
       >
         <View style={styles.headingText}>
-          <Text style={styles.eyebrow}>DATA MEDAN</Text>
           <Text style={styles.title}>Elevasi offline</Text>
           <Text style={styles.summary}>
             {inventory
@@ -430,7 +429,7 @@ export function TerrainPackManager({ mapAreaBounds }: TerrainPackManagerProps) {
               {isCatalogLoading ? (
                 <ActivityIndicator color={AmoledTheme.accentOrange} size="small" />
               ) : (
-                <SFIcon name="arrow.clockwise" color={AmoledTheme.textSecondary} size={13} />
+                <Text style={styles.refreshCatalogText}>Perbarui katalog</Text>
               )}
             </Pressable>
           </View>
@@ -514,7 +513,7 @@ export function TerrainPackManager({ mapAreaBounds }: TerrainPackManagerProps) {
             <View style={styles.catalogMessageCard}>
               <SFIcon name="mountain.2" color={AmoledTheme.textTertiary} size={16} />
               <Text style={styles.catalogMessageText}>
-                Paket elevasi untuk area ini belum tersedia. Siapkan dari data medan nasional di server.
+                Paket elevasi untuk area ini belum tersedia di katalog server.
               </Text>
             </View>
           ) : null}
@@ -691,6 +690,8 @@ export function TerrainPackManager({ mapAreaBounds }: TerrainPackManagerProps) {
             </Text>
           ) : null}
 
+          </> : null}
+
           {/* Section 3: Manual File Import */}
           <Pressable
             accessibilityRole="button"
@@ -709,7 +710,6 @@ export function TerrainPackManager({ mapAreaBounds }: TerrainPackManagerProps) {
               {isChangingPack ? 'Memproses paket…' : 'Impor paket dari File'}
             </Text>
           </Pressable>
-          </> : null}
         </View>
       ) : null}
     </View>
@@ -870,12 +870,8 @@ function TerrainDownloadProgressControls({
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: AmoledTheme.surfaceElevated,
-    borderColor: AmoledTheme.borderDefault,
-    borderRadius: 14,
-    borderWidth: StyleSheet.hairlineWidth,
-    marginTop: 14,
-    paddingHorizontal: 14,
+    borderBottomColor: AmoledTheme.borderSubtle,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
   heading: {
     alignItems: 'center',
@@ -896,13 +892,13 @@ const styles = StyleSheet.create({
   },
   title: {
     color: AmoledTheme.textPrimary,
-    fontSize: 15,
+    fontSize: 17,
     fontWeight: '700',
     marginTop: 3,
   },
   summary: {
     color: AmoledTheme.textSecondary,
-    fontSize: 12,
+    fontSize: 14,
     marginTop: 3,
   },
   details: {
@@ -913,8 +909,8 @@ const styles = StyleSheet.create({
   },
   description: {
     color: AmoledTheme.textSecondary,
-    fontSize: 12,
-    lineHeight: 18,
+    fontSize: 14,
+    lineHeight: 20,
   },
   notice: {
     alignItems: 'flex-start',
@@ -928,8 +924,8 @@ const styles = StyleSheet.create({
   noticeText: {
     color: AmoledTheme.textSecondary,
     flex: 1,
-    fontSize: 11,
-    lineHeight: 16,
+    fontSize: 14,
+    lineHeight: 20,
   },
   sectionHeaderRow: {
     alignItems: 'center',
@@ -974,18 +970,19 @@ const styles = StyleSheet.create({
   },
   mapAreaTitle: {
     color: AmoledTheme.textPrimary,
-    fontSize: 12,
+    fontSize: 15,
     fontWeight: '700',
   },
   mapAreaBounds: {
     color: AmoledTheme.textTertiary,
-    fontSize: 10,
+    fontSize: 14,
     marginTop: 2,
   },
   mapAreaStatus: {
     color: AmoledTheme.accentGreen,
-    flexShrink: 0,
-    fontSize: 10,
+    flexShrink: 1,
+    maxWidth: '45%',
+    fontSize: 14,
     fontWeight: '600',
     textAlign: 'right',
   },
@@ -994,12 +991,12 @@ const styles = StyleSheet.create({
   },
   mapAreaMessage: {
     color: AmoledTheme.textSecondary,
-    fontSize: 11,
-    lineHeight: 16,
+    fontSize: 14,
+    lineHeight: 20,
   },
   sectionTitle: {
     color: AmoledTheme.textSecondary,
-    fontSize: 10,
+    fontSize: 14,
     fontWeight: '800',
     letterSpacing: 0.8,
   },
@@ -1009,8 +1006,13 @@ const styles = StyleSheet.create({
   refreshCatalogButton: {
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 28,
-    minWidth: 28,
+    minHeight: 44,
+    minWidth: 44,
+  },
+  refreshCatalogText: {
+    color: AmoledTheme.accentOrange,
+    fontSize: 14,
+    fontWeight: '700',
   },
   catalogLoadingRow: {
     alignItems: 'center',
@@ -1021,7 +1023,7 @@ const styles = StyleSheet.create({
   },
   catalogLoadingText: {
     color: AmoledTheme.textSecondary,
-    fontSize: 12,
+    fontSize: 14,
   },
   catalogMessageCard: {
     alignItems: 'center',
@@ -1035,8 +1037,8 @@ const styles = StyleSheet.create({
   catalogMessageText: {
     color: AmoledTheme.textSecondary,
     flex: 1,
-    fontSize: 11,
-    lineHeight: 16,
+    fontSize: 14,
+    lineHeight: 20,
   },
   prepareAreaButton: {
     alignItems: 'center',
@@ -1047,13 +1049,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 8,
     marginTop: 8,
-    minHeight: 44,
+    minHeight: 48,
     paddingHorizontal: 12,
   },
   prepareAreaButtonText: {
     color: AmoledTheme.accentOrange,
     flex: 1,
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '700',
   },
   areaBuildStatus: {
@@ -1067,7 +1069,7 @@ const styles = StyleSheet.create({
   areaBuildStatusText: {
     color: AmoledTheme.textSecondary,
     flex: 1,
-    fontSize: 12,
+    fontSize: 14,
   },
   chunkRow: {
     alignItems: 'center',
@@ -1084,12 +1086,12 @@ const styles = StyleSheet.create({
   },
   chunkTitle: {
     color: AmoledTheme.textPrimary,
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '700',
   },
   chunkDetails: {
     color: AmoledTheme.textSecondary,
-    fontSize: 11,
+    fontSize: 14,
     marginTop: 2,
   },
   tagRow: {
@@ -1107,7 +1109,7 @@ const styles = StyleSheet.create({
   },
   tagText: {
     color: AmoledTheme.textSecondary,
-    fontSize: 9,
+    fontSize: 14,
     fontWeight: '600',
   },
   installedBadge: {
@@ -1119,7 +1121,7 @@ const styles = StyleSheet.create({
   },
   installedBadgeText: {
     color: AmoledTheme.accentGreen,
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '700',
   },
   downloadingContainer: {
@@ -1129,16 +1131,17 @@ const styles = StyleSheet.create({
   },
   progressText: {
     color: AmoledTheme.accentOrange,
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '700',
   },
   cancelButton: {
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 36,
-    minWidth: 36,
+    minHeight: 44,
+    minWidth: 44,
   },
   downloadButton: {
+    minHeight: 44,
     alignItems: 'center',
     backgroundColor: AmoledTheme.surfaceInteractive,
     borderColor: AmoledTheme.borderDefault,
@@ -1151,12 +1154,12 @@ const styles = StyleSheet.create({
   },
   downloadButtonText: {
     color: AmoledTheme.accentOrange,
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '700',
   },
   emptyInventoryText: {
     color: AmoledTheme.textTertiary,
-    fontSize: 12,
+    fontSize: 14,
     marginVertical: 8,
   },
   packRow: {
@@ -1172,12 +1175,12 @@ const styles = StyleSheet.create({
   },
   packName: {
     color: AmoledTheme.textPrimary,
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '700',
   },
   packDetails: {
     color: AmoledTheme.textSecondary,
-    fontSize: 11,
+    fontSize: 14,
     marginTop: 3,
   },
   removeButton: {
@@ -1199,7 +1202,7 @@ const styles = StyleSheet.create({
   },
   importButtonText: {
     color: AmoledTheme.background,
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '800',
   },
   disabledButton: {
@@ -1210,8 +1213,8 @@ const styles = StyleSheet.create({
   },
   errorText: {
     color: AmoledTheme.accentRed,
-    fontSize: 11,
-    lineHeight: 16,
+    fontSize: 14,
+    lineHeight: 20,
     marginTop: 9,
   },
 });

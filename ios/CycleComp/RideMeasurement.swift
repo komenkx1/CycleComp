@@ -1,5 +1,18 @@
 import Foundation
 
+enum RideVirtualPower {
+  static func estimateWatts(speedMetersPerSecond: Double?, gradePercent: Double?, totalMassKg: Double?) -> Double? {
+    guard let speed = speedMetersPerSecond, speed.isFinite, speed >= 0, speed <= 30,
+          let grade = gradePercent, grade.isFinite, abs(grade) <= 30,
+          let mass = totalMassKg, mass.isFinite, (30...250).contains(mass) else { return nil }
+    let slope = atan(grade / 100)
+    let gravity = mass * 9.80665 * sin(slope)
+    let rolling = mass * 9.80665 * cos(slope) * 0.005
+    let aerodynamic = 0.5 * 1.225 * 0.40 * speed * speed
+    return max(0, (gravity + rolling + aerodynamic) * speed / 0.97)
+  }
+}
+
 struct RideSpeedSmoother {
   private var filteredSpeedMetersPerSecond: Double?
   private var lastUpdateAt: Date?
@@ -219,6 +232,12 @@ struct RideAscentDelta {
   let descentMeters: Double
 }
 
+func rideAscentSource(elevationSource: String?, relativeElevationMeters: Double?, barometerEpoch: Int?) -> String? {
+  if relativeElevationMeters != nil { return "barometer-relative:\(barometerEpoch ?? 0)" }
+  if elevationSource == "barometer_gps" { return "barometer-absolute" }
+  return elevationSource.map { "absolute:\($0)" }
+}
+
 struct RideAscentAccumulator {
   private struct Reference {
     let elevationMeters: Double
@@ -326,6 +345,10 @@ struct RideAltitudeFusion {
   private var lastAnchorGpsTimestamp: Date?
   private var lastAnchorCorrectionAt: Date?
 
+  func barometerSampleAge(at timestamp: Date) -> TimeInterval? {
+    latestBarometerSample.map { timestamp.timeIntervalSince($0.timestamp) }
+  }
+
   mutating func startNewEpoch(retaining elevationMeters: Double?, isCalibrated: Bool) {
     epoch += 1
     relativeAltitudeAtEpochStart = nil
@@ -357,7 +380,8 @@ struct RideAltitudeFusion {
     let gpsAccuracyIsValid = gpsVerticalAccuracyMeters.map { $0.isFinite && $0 > 0 && $0 <= 60 } ?? false
     let strongGpsAnchorIsValid = gpsElevationIsValid && gpsVerticalAccuracyMeters.map { $0 > 0 && $0 <= 15 } == true
     let barometerIsPaired = latestBarometerSample.map {
-      abs(gpsTimestamp.timeIntervalSince($0.timestamp)) <= 2
+      let sampleAge = gpsTimestamp.timeIntervalSince($0.timestamp)
+      return sampleAge >= -2 && sampleAge <= 5
     } ?? false
     var relativeElevationMeters: Double?
     if barometerIsPaired,

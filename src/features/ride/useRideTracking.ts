@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { AppState, NativeEventEmitter, NativeModules } from 'react-native';
+import { AppState, NativeEventEmitter, NativeModules, PermissionsAndroid, Platform } from 'react-native';
+import type { Permission } from 'react-native';
 
 export type RideSnapshot = {
   status: 'idle' | 'active' | 'paused' | 'recoveryNeeded' | 'finished';
@@ -7,6 +8,8 @@ export type RideSnapshot = {
   watchHeartRateStatus?: 'off' | 'connecting' | 'ready' | 'readingInfo' | 'starting' | 'active' | 'pausing' | 'paused' | 'resuming' | 'stopping' | 'disconnected' | 'error';
   watchHeartRateMessage?: string | null;
   heartRateBpm?: number | null;
+  virtualPowerWatts?: number | null;
+  virtualPowerMassKg?: number;
   heartRateRecordedAt?: string | null;
   heartRateFileUrl?: string;
   rideId?: string;
@@ -21,6 +24,7 @@ export type RideSnapshot = {
   sensorDiagnosticsEnabled?: boolean;
   sensorTraceStatus?: 'off' | 'active' | 'full' | 'complete' | 'error';
   sensorTraceFileUrl?: string;
+  recordingErrorMessage?: string | null;
   barometerStatus?: 'unavailable' | 'starting' | 'active' | 'simulated' | 'paused' | 'error';
   motionSensorStatus?: 'unavailable' | 'activity_only' | 'starting' | 'active' | 'paused' | 'error';
   motionActivityStatus?: 'unavailable' | 'starting' | 'active' | 'denied' | 'paused';
@@ -115,6 +119,7 @@ type RideTrackingModule = {
   getRideState(): Promise<RideSnapshot>;
   getRideElevationTrack(): Promise<RecordedRideElevationSegment>;
   setAutoPauseEnabled(enabled: boolean): Promise<RideSnapshot>;
+  setVirtualPowerMass?(massKg: number): Promise<RideSnapshot>;
   setSensorDiagnosticsEnabled(enabled: boolean): Promise<RideSnapshot>;
   setWatchHeartRateEnabled(enabled: boolean): Promise<RideSnapshot>;
   startRide(): Promise<RideSnapshot>;
@@ -137,6 +142,7 @@ export function useRideTracking() {
   const [trackSegments, setTrackSegments] = useState<[number, number][][]>([]);
   const [lastFinishedRide, setLastFinishedRide] = useState<RideSnapshot | null>(null);
   const [rideError, setRideError] = useState<string | null>(null);
+  const [watchPermissionError, setWatchPermissionError] = useState<string | null>(null);
   const [rideBusy, setRideBusy] = useState(false);
   const [rideChecking, setRideChecking] = useState(true);
 
@@ -150,7 +156,7 @@ export function useRideTracking() {
       const savedRide = await rideTracking.getRideState();
       setRideSnapshot(savedRide);
       setTrackSegments(savedRide.trackSegments ?? []);
-      setRideError(null);
+      setRideError(savedRide.recordingErrorMessage ?? null);
       return savedRide;
     } catch (error) {
       setRideError(rideErrorMessage(error));
@@ -168,7 +174,12 @@ export function useRideTracking() {
     const snapshotListener = rideEvents.addListener('RideTrackingSnapshot', event => {
       const snapshot = event as RideSnapshot;
       setRideSnapshot(snapshot);
-      if (snapshot.newCoordinate) {
+      if (snapshot.recordingErrorMessage) {
+        setRideError(snapshot.recordingErrorMessage);
+      }
+      if (snapshot.trackSegments) {
+        setTrackSegments(snapshot.trackSegments);
+      } else if (snapshot.newCoordinate) {
         setRideError(null);
         setTrackSegments(previousSegments => {
           const newCoordinate = snapshot.newCoordinate as [number, number];
@@ -242,6 +253,51 @@ export function useRideTracking() {
     }
   }
 
+  async function startRide() {
+    if (!rideTracking) return null;
+    if (Platform.OS === 'android') {
+      const permissionsToRequest: Permission[] = [
+        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+        PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION,
+      ];
+      if (Number(Platform.Version) >= 29) {
+        permissionsToRequest.push(PermissionsAndroid.PERMISSIONS.ACTIVITY_RECOGNITION);
+      }
+      if (Number(Platform.Version) >= 33) {
+        permissionsToRequest.push(PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS);
+      }
+      const permissionResults = await PermissionsAndroid.requestMultiple(permissionsToRequest);
+      const locationIsAllowed =
+        permissionResults[PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION] === PermissionsAndroid.RESULTS.GRANTED;
+      if (!locationIsAllowed) {
+        setRideError('Pilih akses lokasi presisi agar rekaman rute CycleComp akurat.');
+        return null;
+      }
+    }
+    return runRideAction(() => rideTracking.startRide());
+  }
+
+  async function setWatchHeartRateEnabled(enabled: boolean) {
+    if (!rideTracking) return null;
+    setWatchPermissionError(null);
+    return runRideAction(async () => {
+      if (enabled && Platform.OS === 'android') {
+        const bluetoothPermissions: Permission[] = Number(Platform.Version) >= 31
+          ? [PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN, PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT]
+          : [PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION];
+        const permissionResults = await PermissionsAndroid.requestMultiple(bluetoothPermissions);
+        if (bluetoothPermissions.some(permission => permissionResults[permission] !== PermissionsAndroid.RESULTS.GRANTED)) {
+          const message = Number(Platform.Version) >= 31
+            ? 'Izinkan perangkat di sekitar untuk menghubungkan Watch 5. Jika izin ditolak permanen, buka Pengaturan aplikasi CycleComp.'
+            : 'Izinkan lokasi untuk mencari Watch 5. Jika izin ditolak permanen, buka Pengaturan aplikasi CycleComp.';
+          setWatchPermissionError(message);
+          throw new Error(message);
+        }
+      }
+      return rideTracking.setWatchHeartRateEnabled(enabled);
+    });
+  }
+
   useEffect(() => {
     const isNavigating = rideSnapshot.status === 'active' || rideSnapshot.status === 'paused';
     if (!rideTracking?.setKeepScreenOn) return;
@@ -266,14 +322,16 @@ export function useRideTracking() {
     trackSegments,
     lastFinishedRide,
     rideError,
+    watchPermissionError,
     rideBusy,
     rideChecking,
     refreshRide,
     getRideElevationTrack: () => rideTracking?.getRideElevationTrack() ?? Promise.resolve([]),
     setAutoPauseEnabled: (enabled: boolean) => rideTracking && runRideAction(() => rideTracking.setAutoPauseEnabled(enabled)),
+    setVirtualPowerMass: (massKg: number) => rideTracking?.setVirtualPowerMass && runRideAction(() => rideTracking.setVirtualPowerMass!(massKg)),
     setSensorDiagnosticsEnabled: (enabled: boolean) => rideTracking && runRideAction(() => rideTracking.setSensorDiagnosticsEnabled(enabled)),
-    setWatchHeartRateEnabled: (enabled: boolean) => rideTracking && runRideAction(() => rideTracking.setWatchHeartRateEnabled(enabled)),
-    startRide: () => rideTracking && runRideAction(() => rideTracking.startRide()),
+    setWatchHeartRateEnabled,
+    startRide,
     pauseRide: () => rideTracking && runRideAction(() => rideTracking.pauseRide()),
     resumeRide: () => rideTracking && runRideAction(() => rideTracking.resumeRide()),
     finishRide: () => rideTracking && runRideAction(() => rideTracking.finishRide()),

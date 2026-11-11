@@ -7,8 +7,8 @@ import {
   selectedAreaFromFrameCorners,
 } from '../src/features/maps/offlineMapSource';
 
-test('loads map resources from the public VPS IP over HTTPS', () => {
-  expect(CYCLECOMP_VPS_BASE_URL).toBe('https://168.110.215.60:9443');
+test('loads map resources from the CycleComp map domain over HTTPS', () => {
+  expect(CYCLECOMP_VPS_BASE_URL).toBe('https://maps.mangwahyu.tech');
   expect(INDONESIA_MAP_STYLE_URL).toBe(
     `${CYCLECOMP_VPS_BASE_URL}/style-v4.json`,
   );

@@ -111,6 +111,62 @@ def test_area_request_only_builds_matching_chunks_and_keeps_current_catalog(tmp_
             worker.close()
 
 
+def test_area_with_osm_source_falls_back_to_grid_for_roadless_chunk_and_changes_job_identity(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    import osmium
+
+    monkeypatch.setattr(terrain_area_build, "MINIMUM_HEADROOM_BYTES", 0)
+    dataset_directory = tmp_path / "dataset"
+    _create_test_dem(dataset_directory)
+    pbf_path = tmp_path / "roads.osm.pbf"
+    with osmium.SimpleWriter(str(pbf_path), overwrite=True) as writer:
+        # The only road is far outside the requested chunk.
+        writer.add_node(osmium.osm.mutable.Node(id=1, location=(10.0, 10.0)))
+        writer.add_node(osmium.osm.mutable.Node(id=2, location=(10.001, 10.0)))
+        writer.add_way(osmium.osm.mutable.Way(id=1, nodes=[1, 2], tags={"highway": "residential"}))
+    osm_road_source = {
+        "osmPbf": str(pbf_path),
+        "osmSourceUrl": "https://example.invalid/roads.osm.pbf",
+        "osmSnapshotAt": "2026-10-30T20:00:00Z",
+    }
+    region = {"chunkId": "test-region-1", "packId": "test-region-1-grid-v1", "bounds": list(AREA_BOUNDS)}
+    region_config_path = tmp_path / "region-config.json"
+    config = {"releaseId": "copernicus-test-v1", "signatureKeyId": SIGNATURE_KEY_ID, "regions": [region]}
+    region_config_path.write_text(json.dumps(config), encoding="utf-8")
+    signing_key_path = tmp_path / "signing-key.pem"
+    trusted_signing_key = _create_signing_key(signing_key_path)
+    distribution_directory = tmp_path / "distribution"
+
+    def job_id_for_config() -> str:
+        manager = TerrainAreaBuildManager(
+            region_config_path=region_config_path,
+            distribution_directory=distribution_directory,
+            jobs_directory=tmp_path / "jobs",
+            trusted_signing_keys={SIGNATURE_KEY_ID: trusted_signing_key},
+        )
+        return manager._job_id(["test-region-1"])
+
+    grid_only_job_id = job_id_for_config()
+    region_config_path.write_text(json.dumps({**config, "osmRoadSource": osm_road_source}), encoding="utf-8")
+    assert job_id_for_config() != grid_only_job_id
+
+    publication = terrain_area_build.build_terrain_area_release(
+        regions=[region],
+        source_release_id="copernicus-test-v1",
+        dataset_directory=dataset_directory,
+        distribution_directory=distribution_directory,
+        signing_key_path=signing_key_path,
+        signature_key_id=SIGNATURE_KEY_ID,
+        osm_road_source=osm_road_source,
+    )
+    manifest = json.loads(
+        (distribution_directory / "releases" / str(publication["releaseId"]) / "test-region-1" / "manifest.json")
+        .read_text(encoding="utf-8")
+    )
+    assert manifest["hasRoadGraph"] is False
+
+
 def test_area_selection_deduplicates_overlapping_saved_map_bounds() -> None:
     configured_regions = [
         {"chunkId": "first", "bounds": [1, 1, 2, 2]},

@@ -121,6 +121,7 @@ def build_elevation_grid_pack(
                 road_graph_buffer_meters,
             )
             road_profiles = build_road_elevation_profiles(database_path, terrain_store)
+            _drop_edge_elevation_samples(database_path)
 
         road_graph_record = (
             road_graph.as_manifest_record(
@@ -619,6 +620,17 @@ def _validate_bounds(bounds: tuple[float, float, float, float]) -> tuple[float, 
     if west < -180 or east > 180 or south < -90 or north > 90 or west >= east or south >= north:
         raise ValueError("bounds are outside WGS84 or have no area")
     return west, south, east, north
+
+
+def _drop_edge_elevation_samples(database_path: Path) -> None:
+    # Per-edge samples only feed corridor profiles at build time and were over half of a dense city pack.
+    connection = sqlite3.connect(database_path)
+    try:
+        connection.execute("DROP TABLE elevation_samples")
+        connection.commit()
+        connection.execute("VACUUM")
+    finally:
+        connection.close()
 
 
 def _file_sha256(file_path: Path) -> str:

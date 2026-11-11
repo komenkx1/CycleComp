@@ -22,8 +22,8 @@ export const AmoledTheme = {
   
   // High-Contrast AMOLED Typography (Maximum sunlight legibility)
   textPrimary: '#FFFFFF',
-  textSecondary: '#98989D',
-  textTertiary: '#636366',
+  textSecondary: '#B4BEB8',
+  textTertiary: '#909A94',
   textDisabled: '#48484A',
   
   // High-Visibility OLED Accents (Garmin / Apple Fitness style)

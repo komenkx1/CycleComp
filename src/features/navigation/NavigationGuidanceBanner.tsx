@@ -11,6 +11,7 @@ import type { TurnInstruction } from '../../domain/routes/navigation/routeNaviga
 import { formatNavigationDistance } from '../../domain/routes/navigation/routeNavigationGuidance';
 import {
   type ClimbAlertState,
+  type RouteSample,
   formatGradePercent,
   getGradeColor,
   getGradeLabel,
@@ -24,8 +25,14 @@ import { buildClimbProfileSamples } from '../ride/ClimbAlertBanner';
 type NavigationGuidanceBannerProps = {
   instruction: TurnInstruction | null;
   climbAlert: ClimbAlertState;
+  routeSamples?: RouteSample[];
   routeName?: string;
+  hasRoute?: boolean;
+  isOffRoute?: boolean;
+  waitingForGps?: boolean;
+  distanceToFinishMeters?: number | null;
   isPaused?: boolean;
+  needsRecovery?: boolean;
   accuracyMeters?: number | null;
   soundEnabled?: boolean;
   onToggleSound?: () => void;
@@ -39,8 +46,14 @@ const THEN_PILL_BG = 'rgba(0, 0, 0, 0.35)';
 export function NavigationGuidanceBanner({
   instruction,
   climbAlert,
+  routeSamples,
   routeName,
+  hasRoute = false,
+  isOffRoute = false,
+  waitingForGps = false,
+  distanceToFinishMeters = null,
   isPaused = false,
+  needsRecovery = false,
   accuracyMeters = null,
   soundEnabled = true,
   onToggleSound,
@@ -75,24 +88,27 @@ export function NavigationGuidanceBanner({
           accessibilityLabel="Buka panduan navigasi"
           accessibilityRole="button"
           onPress={toggleCollapsed}
-          style={[styles.card, styles.collapsedCard]}
+          style={[styles.card, styles.collapsedCard, isOffRoute && styles.offRouteCard]}
         >
           <View style={styles.collapsedRow}>
             <SFIcon
-              name={instruction ? navigationSymbolName(instruction.type) : 'location.north.fill'}
+              name={isOffRoute ? 'exclamationmark.triangle.fill' : instruction ? navigationSymbolName(instruction.type) : 'location.north.fill'}
               size={20}
             />
             <View style={styles.collapsedTextCol}>
               <Text numberOfLines={1} style={styles.collapsedMainText}>
-                {instruction
+                {isOffRoute
+                  ? 'Keluar dari rute · kembali ke garis rute'
+                  : instruction
                   ? `${formatNavigationDistance(instruction.distanceMeters)} · ${instruction.title}`
-                  : `Navigasi Bebas · ${isPaused ? 'Jeda' : 'Merekam'}`}
+                  : `${hasRoute && waitingForGps ? 'Menunggu GPS' : hasRoute ? 'Panduan rute' : 'Navigasi Bebas'} · ${needsRecovery ? 'Perlu dipulihkan' : isPaused ? 'Jeda' : 'Merekam'}`}
               </Text>
               {hasClimb ? (
                 <Text numberOfLines={1} style={styles.collapsedClimbText}>
                   {`Tanjakan ${formatGradePercent(climbGrade)} (${getGradeLabel(climbGrade)})`}
                 </Text>
               ) : null}
+              {hasRoute ? <Text style={styles.collapsedClimbText}>{formatFinishDistance(distanceToFinishMeters)}</Text> : null}
             </View>
             <Text style={styles.expandChevron}>▼</Text>
           </View>
@@ -105,7 +121,7 @@ export function NavigationGuidanceBanner({
   if (!instruction) {
     return (
       <View style={styles.container}>
-        <View style={styles.card}>
+        <View accessibilityLiveRegion={isOffRoute ? "assertive" : "polite"} style={[styles.card, isOffRoute && styles.offRouteCard]}>
           <View style={styles.mainRow}>
             <View style={styles.iconColumn}>
               <View style={styles.freeRideIconContainer}>
@@ -115,7 +131,7 @@ export function NavigationGuidanceBanner({
             <View style={styles.contentColumn}>
               <View style={styles.titleRow}>
                 <Text numberOfLines={1} style={styles.distanceText}>
-                  Navigasi Bebas
+                  {isOffRoute ? 'Keluar dari rute' : hasRoute && waitingForGps ? 'Menunggu GPS' : hasRoute ? 'Panduan rute' : 'Navigasi Bebas'}
                 </Text>
                 <View style={styles.headerRightControls}>
                   {accuracyMeters != null ? (
@@ -127,11 +143,11 @@ export function NavigationGuidanceBanner({
                     <View
                       style={[
                         styles.statusDot,
-                        isPaused ? styles.pausedDot : styles.liveDot,
+                        isPaused || needsRecovery ? styles.pausedDot : styles.liveDot,
                       ]}
                     />
                     <Text style={styles.statusLabel}>
-                      {isPaused ? 'Jeda' : 'Merekam'}
+                      {needsRecovery ? 'Perlu dipulihkan' : isPaused ? 'Jeda' : 'Merekam'}
                     </Text>
                   </View>
                   <Pressable
@@ -147,13 +163,13 @@ export function NavigationGuidanceBanner({
                 </View>
               </View>
               <Text numberOfLines={1} style={styles.instructionText}>
-                {routeName ?? 'Merekam rute GPS tanpa GPX'}
+                {isOffRoute ? 'Kembali ke garis rute untuk melanjutkan panduan' : routeName ?? (needsRecovery ? 'Pulihkan perjalanan untuk melanjutkan' : isPaused ? 'Perekaman dijeda' : 'Merekam rute GPS tanpa GPX')}
               </Text>
             </View>
           </View>
 
           {hasClimb ? (
-            <ClimbAlertRow alert={climbAlert} gradeColor={climbGradeColor} />
+            <ClimbAlertRow alert={climbAlert} gradeColor={climbGradeColor} samples={routeSamples} />
           ) : null}
         </View>
       </View>
@@ -162,15 +178,15 @@ export function NavigationGuidanceBanner({
 
   return (
     <View style={styles.container}>
-      <View style={styles.card}>
+      <View accessibilityLiveRegion={isOffRoute ? "assertive" : "polite"} style={[styles.card, isOffRoute && styles.offRouteCard]}>
         {/* Top guidance row (Google Maps Style) */}
         <View style={styles.mainRow}>
           {/* Left: Big maneuver arrow & "Then / Lalu" pill */}
           <View style={styles.iconColumn}>
             <View style={styles.turnIconCircle}>
-              <SFIcon name={navigationSymbolName(instruction.type)} size={34} />
+              <SFIcon name={isOffRoute ? 'exclamationmark.triangle.fill' : navigationSymbolName(instruction.type)} size={34} />
             </View>
-            {instruction.thenManeuver ? (
+            {!isOffRoute && instruction.thenManeuver ? (
               <View style={styles.thenPill}>
                 <Text style={styles.thenPrefix}>Lalu</Text>
                 <SFIcon name={navigationSymbolName(instruction.thenManeuver.type)} size={17} />
@@ -182,7 +198,7 @@ export function NavigationGuidanceBanner({
           <View style={styles.contentColumn}>
             <View style={styles.titleRow}>
               <Text style={styles.distanceText}>
-                {instruction.distanceMeters < 30
+                {isOffRoute ? 'Keluar dari rute' : instruction.distanceMeters < 30
                   ? 'Sekarang'
                   : `Dalam ${formatNavigationDistance(instruction.distanceMeters)}`}
               </Text>
@@ -218,22 +234,27 @@ export function NavigationGuidanceBanner({
             </View>
 
             <Text numberOfLines={2} style={styles.instructionText}>
-              {instruction.title}
+              {isOffRoute ? 'Kembali ke garis rute' : instruction.title}
             </Text>
 
             <Text numberOfLines={1} style={styles.descriptionSubText}>
-              {instruction.description}
+              {isOffRoute ? 'Ikuti garis rute untuk melanjutkan panduan.' : instruction.description}
             </Text>
+            {hasRoute ? <Text testID="navigation-distance-to-finish" style={styles.descriptionSubText}>{formatFinishDistance(distanceToFinishMeters)}</Text> : null}
           </View>
         </View>
 
         {/* Integrated Climb Alert Warning Section */}
         {hasClimb ? (
-          <ClimbAlertRow alert={climbAlert} gradeColor={climbGradeColor} />
+          <ClimbAlertRow alert={climbAlert} gradeColor={climbGradeColor} samples={routeSamples} />
         ) : null}
       </View>
     </View>
   );
+}
+
+function formatFinishDistance(distanceMeters: number | null): string {
+  return `Sisa ke finish: ${distanceMeters == null ? '—' : `${(distanceMeters / 1000).toFixed(1).replace('.', ',')} km`}`;
 }
 
 /**
@@ -243,14 +264,16 @@ export function NavigationGuidanceBanner({
 function ClimbAlertRow({
   alert,
   gradeColor,
+  samples,
 }: {
   alert: ClimbAlertState;
   gradeColor: string;
+  samples?: RouteSample[];
 }) {
   const climb = alert.type === 'none' ? null : alert.climb;
   const climbSamples = useMemo(
-    () => climb ? buildClimbProfileSamples(climb) : [],
-    [climb],
+    () => climb ? buildClimbProfileSamples(climb, samples) : [],
+    [climb, samples],
   );
   if (alert.type === 'none') {
     return null;
@@ -310,7 +333,7 @@ function ClimbAlertRow({
       </View>
 
       {/* 2D Mini Profile dengan Rider Dot saat sedang menanjak aktif */}
-      {isActive ? (
+      {isActive && climbSamples.length >= 2 ? (
         <View style={styles.climbMiniProfileWrap}>
           <ElevationProfileChart
             samples={climbSamples}
@@ -375,6 +398,10 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.55,
     shadowRadius: 10,
     width: '100%',
+  },
+  offRouteCard: {
+    backgroundColor: '#5B3A00',
+    borderColor: AmoledTheme.accentYellow,
   },
   collapsedCard: {
     paddingVertical: 8,

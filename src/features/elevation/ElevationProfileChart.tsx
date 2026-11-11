@@ -356,23 +356,25 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     color: AmoledTheme.textSecondary,
-    fontSize: 12,
+    fontSize: 14,
   },
   labelRow: {
     alignItems: 'center',
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 6,
+    flexWrap: 'wrap',
+    gap: 4,
+    marginBottom: 8,
   },
   elevationBoundaryText: {
     color: AmoledTheme.textSecondary,
-    fontSize: 10,
+    fontSize: 14,
     fontVariant: ['tabular-nums'],
     fontWeight: '600',
   },
   peakElevationText: {
     color: AmoledTheme.textPrimary,
-    fontSize: 10,
+    fontSize: 14,
     fontVariant: ['tabular-nums'],
     fontWeight: '700',
   },
@@ -382,6 +384,7 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   scrubIndicatorBadge: {
+    maxWidth: '100%',
     backgroundColor: AmoledTheme.accentOrange,
     borderRadius: 6,
     paddingHorizontal: 6,
@@ -389,7 +392,7 @@ const styles = StyleSheet.create({
   },
   scrubIndicatorText: {
     color: '#FFFFFF',
-    fontSize: 10,
+    fontSize: 14,
     fontVariant: ['tabular-nums'],
     fontWeight: '700',
   },
@@ -466,7 +469,7 @@ const styles = StyleSheet.create({
   },
   distanceFooterText: {
     color: AmoledTheme.textSecondary,
-    fontSize: 9,
+    fontSize: 14,
     fontVariant: ['tabular-nums'],
     fontWeight: '600',
   },

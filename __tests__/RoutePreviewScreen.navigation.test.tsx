@@ -20,7 +20,7 @@ const mockMapUnproject = jest.fn(async ([x, y]: [number, number]) => [
 ] as [number, number]);
 const renderedScreens: ReactTestRenderer.ReactTestRenderer[] = [];
 let mockRideState: {
-  rideSnapshot: { status: 'idle' | 'active'; lastCoordinate?: [number, number]; pointCount?: number; sensorDiagnosticsEnabled?: boolean };
+  rideSnapshot: { status: 'idle' | 'active'; lastCoordinate?: [number, number]; lastFixAt?: string; pointCount?: number; sensorDiagnosticsEnabled?: boolean };
   trackSegments: [number, number][][];
 } = { rideSnapshot: { status: 'idle' }, trackSegments: [] };
 let mockMapPackState: { status: 'ready'; downloadedBytes: number } | { status: 'missing' } = {
@@ -447,6 +447,7 @@ test('quick action centers camera on user position, retains blue dot on map drag
   });
 
   expect(screenRenderer!.root.findAllByProps({ testID: 'user-location-dot' })).toHaveLength(0);
+  await ReactTestRenderer.act(() => { pressButton(screenRenderer!, 'Lihat peta'); });
 
   await ReactTestRenderer.act(async () => {
     pressButton(screenRenderer!, 'Pusatkan ke lokasi saya');
@@ -513,6 +514,46 @@ test('renders route with gradient coloring and legend in preview mode', async ()
   expect(screenRenderer.root.findByProps({ children: 'Turun' })).toBeTruthy();
   expect(screenRenderer.root.findByProps({ children: '0–3%' })).toBeTruthy();
   expect(screenRenderer.root.findByProps({ children: '3–6%' })).toBeTruthy();
+});
+
+test('switches between the full route details and map preview', async () => {
+  const screenRenderer = await renderImportedRoute();
+
+  expect(screenRenderer.root.findByProps({ children: 'Jatiluwih' })).toBeTruthy();
+  await ReactTestRenderer.act(() => { pressButton(screenRenderer, 'Lihat rute di peta'); });
+  expect(screenRenderer.root.findByProps({ accessibilityLabel: 'Pusatkan ke lokasi saya' })).toBeTruthy();
+  await ReactTestRenderer.act(() => { pressButton(screenRenderer, 'Kembali ke detail rute'); });
+  expect(screenRenderer.root.findByProps({ children: 'Jatiluwih' })).toBeTruthy();
+  expect(screenRenderer.root.findAllByProps({ accessibilityLabel: 'Pusatkan ke lokasi saya' })).toHaveLength(0);
+});
+
+test('uses a fresh fix and distance to route segments for off-route warnings', async () => {
+  const screenRenderer = await renderImportedRoute();
+  const routeMidpoint: [number, number] = [
+    (115.21535 + 115.20751) / 2,
+    (-8.67567 + -8.63886) / 2,
+  ];
+  mockRideState = {
+    rideSnapshot: { status: 'active', lastCoordinate: routeMidpoint, lastFixAt: new Date().toISOString() },
+    trackSegments: [],
+  };
+  await ReactTestRenderer.act(() => screenRenderer.update(<RoutePreviewScreen />));
+  expect(screenRenderer.root.findAllByProps({ children: 'Keluar dari rute' })).toHaveLength(0);
+
+  mockRideState = {
+    rideSnapshot: { status: 'active', lastCoordinate: [115.23, -8.65], lastFixAt: new Date().toISOString() },
+    trackSegments: [],
+  };
+  await ReactTestRenderer.act(() => screenRenderer.update(<RoutePreviewScreen />));
+  expect(screenRenderer.root.findByProps({ children: 'Keluar dari rute' })).toBeTruthy();
+
+  mockRideState = {
+    rideSnapshot: { status: 'active', lastCoordinate: [115.23, -8.65], lastFixAt: new Date(Date.now() - 60000).toISOString() },
+    trackSegments: [],
+  };
+  await ReactTestRenderer.act(() => screenRenderer.update(<RoutePreviewScreen />));
+  expect(screenRenderer.root.findAllByProps({ children: 'Keluar dari rute' })).toHaveLength(0);
+  expect(screenRenderer.root.findByProps({ children: 'Menunggu GPS' })).toBeTruthy();
 });
 
 test('allows removing/clearing imported GPX route to return to empty state', async () => {
@@ -611,6 +652,7 @@ test('releases preview location updates in background and restores them on retur
   mockRequestLocationPermission.mockResolvedValue(true);
   let screen!: ReactTestRenderer.ReactTestRenderer;
   await ReactTestRenderer.act(() => { screen = createScreen(); });
+  await ReactTestRenderer.act(() => { pressButton(screen, 'Lihat peta'); });
   await ReactTestRenderer.act(async () => { pressButton(screen, 'Pusatkan ke lokasi saya'); });
   const appStateChanged = appStateSpy.mock.calls[0][1];
   await ReactTestRenderer.act(() => { appStateChanged('inactive'); });

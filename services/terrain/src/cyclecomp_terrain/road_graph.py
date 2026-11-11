@@ -93,6 +93,10 @@ class RoadGraphBuildResult:
         }
 
 
+class NoRoadSegmentsError(ValueError):
+    pass
+
+
 def add_osm_road_graph(
     database_path: Path,
     osm_pbf_path: Path,
@@ -285,7 +289,7 @@ def add_osm_road_graph(
         if foreign_key_error is not None:
             raise ValueError("terrain pack road graph contains an invalid relationship")
         if road_graph.directed_edge_count == 0:
-            raise ValueError("OSM PBF contains no supported road segments inside the selected area")
+            raise NoRoadSegmentsError("OSM PBF contains no supported road segments inside the selected area")
         logger.info(
             "Road graph ready: %d edges; %d degenerate segments excluded",
             road_graph.directed_edge_count,
